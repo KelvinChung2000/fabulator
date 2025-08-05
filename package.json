@@ -1,0 +1,93 @@
+{
+  "name": "fabulator",
+  "displayName": "fabulator",
+  "description": "VScode extension for FABulous eFPGA framework",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.102.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "fabulator.openFabric",
+        "title": "Open Fabric",
+        "category": "FABulator"
+      },
+      {
+        "command": "fabulator.openDesign",
+        "title": "Open Design",
+        "category": "FABulator"
+      },
+      {
+        "command": "fabulator.helloWorld",
+        "title": "Hello World"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "fabulator.openFabric",
+          "title": "FABulator: Open Fabric"
+        },
+        {
+          "command": "fabulator.openDesign",
+          "title": "FABulator: Open Design"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build:all",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "build:webview": "vite build --config vite.config.ts",
+    "build:all": "npm run build:webview && npm run compile",
+    "dev:webview": "vite --config vite.config.ts",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src",
+    "test": "vscode-test",
+    "test:unit": "vitest run",
+    "test:watch": "vitest",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest run --coverage",
+    "test:webview": "vitest run --config vitest.webview.config.ts",
+    "test:webview:watch": "vitest --config vitest.webview.config.ts",
+    "test:webview:ui": "vitest --ui --config vitest.webview.config.ts",
+    "test:all": "npm run test:unit && npm run test:webview"
+  },
+  "dependencies": {
+    "@pixi/unsafe-eval": "^7.4.3",
+    "pixi-viewport": "^6.0.3",
+    "pixi.js": "^8.8.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.6.4",
+    "@testing-library/react": "^16.3.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "20.x",
+    "@types/react": "^18.3.1",
+    "@types/react-dom": "^18.3.1",
+    "@types/vscode": "^1.102.0",
+    "@typescript-eslint/eslint-plugin": "^8.31.1",
+    "@typescript-eslint/parser": "^8.31.1",
+    "@vitejs/plugin-react": "^4.3.3",
+    "@vitest/ui": "^3.2.4",
+    "@vscode/test-cli": "^0.0.11",
+    "@vscode/test-electron": "^2.5.2",
+    "canvas": "^3.1.2",
+    "eslint": "^9.25.1",
+    "eslint-plugin-react-hooks": "^5.1.0",
+    "eslint-plugin-react-refresh": "^0.4.16",
+    "jsdom": "^26.0.0",
+    "typescript": "^5.8.3",
+    "vite": "^6.1.1",
+    "vitest": "^3.2.4"
+  }
+}

@@ -1,0 +1,68 @@
+.worldview {
+    background: var(--vscode-editor-background);
+    border: 1px solid var(--vscode-widget-border);
+    border-radius: 6px;
+    overflow: hidden;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.worldview-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    background: var(--vscode-titleBar-activeBackground, var(--vscode-editor-background));
+    border-bottom: 1px solid var(--vscode-widget-border);
+    font-size: 12px;
+}
+
+.worldview-title {
+    font-weight: 600;
+    color: var(--vscode-titleBar-activeForeground, var(--vscode-foreground));
+}
+
+.worldview-info {
+    color: var(--vscode-descriptionForeground);
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 11px;
+}
+
+.worldview-canvas-container {
+    width: 200px;
+    height: 150px;
+    position: relative;
+    background: #1e1e1e;
+}
+
+.worldview-canvas-container canvas {
+    display: block;
+    width: 100% !important;
+    height: 100% !important;
+}
+
+/* Dark theme adjustments */
+.vscode-dark .worldview {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+.vscode-dark .worldview-canvas-container {
+    background: #1e1e1e;
+}
+
+/* Light theme adjustments */
+.vscode-light .worldview {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.vscode-light .worldview-canvas-container {
+    background: #f8f8f8;
+}
+
+/* High contrast theme adjustments */
+.vscode-high-contrast .worldview {
+    border: 2px solid var(--vscode-contrastBorder);
+}
+
+.vscode-high-contrast .worldview-header {
+    border-bottom: 2px solid var(--vscode-contrastBorder);
+}
