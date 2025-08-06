@@ -20,7 +20,15 @@ export const WorldView: React.FC<WorldViewProps> = ({
     const appRef = useRef<Application | null>(null);
     const containerRef = useRef<Container | null>(null);
     const viewportIndicatorRef = useRef<Graphics | null>(null);
-    const transformRef = useRef<{ scale: number; offsetX: number; offsetY: number }>({ scale: 1, offsetX: 0, offsetY: 0 });
+    const transformRef = useRef<{ 
+        scale: number; 
+        offsetX: number; 
+        offsetY: number; 
+        minX?: number; 
+        minY?: number; 
+        fabricWidth?: number; 
+        fabricHeight?: number; 
+    }>({ scale: 1, offsetX: 0, offsetY: 0 });
     const [isInitialized, setIsInitialized] = useState(false);
 
     // Initialize PixiJS app
@@ -69,9 +77,41 @@ export const WorldView: React.FC<WorldViewProps> = ({
         // Clear previous content
         container.removeChildren();
 
-        // Calculate scale to fit fabric in minimap
-        const fabricWidth = geometry.width;
-        const fabricHeight = geometry.height;
+        // Calculate actual fabric bounds from tile positions
+        const { tileNames, tileLocations, tileGeomMap } = geometry;
+        let minX = Number.MAX_VALUE;
+        let minY = Number.MAX_VALUE;
+        let maxX = Number.MIN_VALUE;
+        let maxY = Number.MIN_VALUE;
+
+        // Find the actual bounds of the fabric by examining all tiles
+        for (let y = 0; y < tileNames.length; y++) {
+            for (let x = 0; x < tileNames[y].length; x++) {
+                const tileName = tileNames[y][x];
+                const tileLocation = tileLocations[y][x];
+
+                if (tileName && tileLocation) {
+                    const tileGeometry = tileGeomMap[tileName];
+                    if (tileGeometry) {
+                        const tileMinX = tileLocation.x;
+                        const tileMinY = tileLocation.y;
+                        const tileMaxX = tileLocation.x + tileGeometry.width;
+                        const tileMaxY = tileLocation.y + tileGeometry.height;
+
+                        minX = Math.min(minX, tileMinX);
+                        minY = Math.min(minY, tileMinY);
+                        maxX = Math.max(maxX, tileMaxX);
+                        maxY = Math.max(maxY, tileMaxY);
+                    }
+                }
+            }
+        }
+
+        // Calculate fabric dimensions from actual bounds
+        const fabricWidth = maxX - minX;
+        const fabricHeight = maxY - minY;
+
+        // Calculate scale to fit fabric in minimap with padding
         const mapWidth = app.screen.width - 20; // Leave some padding
         const mapHeight = app.screen.height - 20;
 
@@ -82,13 +122,12 @@ export const WorldView: React.FC<WorldViewProps> = ({
         // Create simplified fabric representation
         const fabricGraphics = new Graphics();
 
-        // Draw fabric boundary
-        fabricGraphics.rect(0, 0, fabricWidth, fabricHeight);
+        // Draw fabric boundary (using actual bounds)
+        fabricGraphics.rect(minX, minY, fabricWidth, fabricHeight);
         fabricGraphics.stroke({ width: 1, color: 0x555555 });
         fabricGraphics.fill(0x2a2a2a);
 
         // Draw tiles as simplified rectangles
-        const { tileNames, tileLocations, tileGeomMap } = geometry;
         for (let y = 0; y < tileNames.length; y++) {
             for (let x = 0; x < tileNames[y].length; x++) {
                 const tileName = tileNames[y][x];
@@ -111,10 +150,18 @@ export const WorldView: React.FC<WorldViewProps> = ({
             }
         }
 
-        // Apply scale and center
+        // Apply scale and center the fabric in the minimap
         fabricGraphics.scale.set(scale);
-        fabricGraphics.x = (app.screen.width - fabricWidth * scale) / 2;
-        fabricGraphics.y = (app.screen.height - fabricHeight * scale) / 2;
+        
+        // Center the fabric properly accounting for its actual bounds
+        const scaledWidth = fabricWidth * scale;
+        const scaledHeight = fabricHeight * scale;
+        const scaledMinX = minX * scale;
+        const scaledMinY = minY * scale;
+        
+        // Position to center the scaled fabric in the minimap
+        fabricGraphics.x = (app.screen.width - scaledWidth) / 2 - scaledMinX;
+        fabricGraphics.y = (app.screen.height - scaledHeight) / 2 - scaledMinY;
 
         container.addChild(fabricGraphics);
 
@@ -123,8 +170,16 @@ export const WorldView: React.FC<WorldViewProps> = ({
         viewportIndicatorRef.current = viewportIndicator;
         container.addChild(viewportIndicator);
 
-        // Store scale and offset for click handling
-        transformRef.current = { scale, offsetX: fabricGraphics.x, offsetY: fabricGraphics.y };
+        // Store scale and offset for click handling (using actual fabric bounds)
+        transformRef.current = { 
+            scale, 
+            offsetX: fabricGraphics.x, 
+            offsetY: fabricGraphics.y,
+            minX,
+            minY,
+            fabricWidth,
+            fabricHeight
+        };
 
     }, [isInitialized, geometry]);
 
@@ -133,14 +188,14 @@ export const WorldView: React.FC<WorldViewProps> = ({
         if (!viewportIndicatorRef.current || !containerRef.current || !geometry) return;
 
         const indicator = viewportIndicatorRef.current;
-        const { scale, offsetX, offsetY } = transformRef.current;
+        const { scale, offsetX, offsetY, minX = 0, minY = 0 } = transformRef.current;
 
         // Clear previous indicator
         indicator.clear();
 
-        // Draw viewport rectangle
-        const x = viewportBounds.x * scale + offsetX;
-        const y = viewportBounds.y * scale + offsetY;
+        // Draw viewport rectangle - account for fabric coordinate offset
+        const x = (viewportBounds.x - minX) * scale + offsetX;
+        const y = (viewportBounds.y - minY) * scale + offsetY;
         const width = viewportBounds.width * scale;
         const height = viewportBounds.height * scale;
 
@@ -156,14 +211,15 @@ export const WorldView: React.FC<WorldViewProps> = ({
 
         const canvas = canvasRef.current!;
         const rect = canvas.getBoundingClientRect();
-        const { scale, offsetX, offsetY } = transformRef.current;
+        const { scale, offsetX, offsetY, minX = 0, minY = 0 } = transformRef.current;
 
         // Convert click coordinates to fabric coordinates
         const clickX = event.clientX - rect.left;
         const clickY = event.clientY - rect.top;
 
-        const fabricX = (clickX - offsetX) / scale;
-        const fabricY = (clickY - offsetY) / scale;
+        // Account for the fabric offset and scaling
+        const fabricX = (clickX - offsetX) / scale + minX;
+        const fabricY = (clickY - offsetY) / scale + minY;
 
         onViewportClick(fabricX, fabricY);
     };

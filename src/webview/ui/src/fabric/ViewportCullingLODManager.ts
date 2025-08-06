@@ -15,6 +15,7 @@ import {
     getLodLevel, 
     getCullingBufferMultiplier,
     LOD_UPDATE_THRESHOLD,
+    LOD_UPDATE_THROTTLE_MS,
     DEFAULT_LOD_LEVEL,
     DEBUG_CONSTANTS,
     WIRE_CONSTANTS
@@ -27,6 +28,9 @@ export class ViewportCullingLODManager {
     private currentLOD: number = DEFAULT_LOD_LEVEL;
     private culledObjects: Set<Container> = new Set();
     private currentGeometry: FabricGeometry | null = null;
+    
+    // LOD throttling (matching JavaFX 40ms throttle)
+    private lastLODUpdate: number = 0;
 
     // Wire management for LOD
     private highlightedWires: Set<Graphics> = new Set();
@@ -44,6 +48,7 @@ export class ViewportCullingLODManager {
         this.tileContainers = tileContainers;
         this.culledObjects.clear();
         this.currentLOD = DEFAULT_LOD_LEVEL;
+        this.lastLODUpdate = 0; // Reset throttle timer
     }
 
     // =============================================================================
@@ -51,6 +56,13 @@ export class ViewportCullingLODManager {
     // =============================================================================
 
     public updateLOD(): void {
+        const currentTime = Date.now();
+        
+        // Throttle LOD updates to match JavaFX implementation (40ms)
+        if (currentTime - this.lastLODUpdate < LOD_UPDATE_THROTTLE_MS) {
+            return;
+        }
+        
         const zoomLevel = this.viewport.scale.x;
         
         if (DEBUG_CONSTANTS.LOG_LOD_CHANGES) {
@@ -61,6 +73,7 @@ export class ViewportCullingLODManager {
         if (Math.abs(this.currentLOD - zoomLevel) < LOD_UPDATE_THRESHOLD) return;
         
         this.currentLOD = zoomLevel;
+        this.lastLODUpdate = currentTime;
         
         // Apply culling first (determines what's visible)
         this.applyCulling();
@@ -187,66 +200,65 @@ export class ViewportCullingLODManager {
     private applyTileLOD(tileContainer: Container, zoom: number): void {
         const lod = getLodLevel(zoom);
         
-        for (const child of tileContainer.children) {
-            if (!child.userData) continue;
-            
-            const childType = child.userData.type;
-            
-            switch (lod) {
-                case LodLevel.LOW:
-                    // Show only basic tile outline and low-LOD substitutes
-                    switch (childType) {
-                        case 'tile':           // Tile outline
-                        case 'lowLodSubstitute': // Switch matrix substitute
-                        case 'lowLodWires':    // Low-LOD wire rectangles
-                            child.visible = true;
-                            break;
-                        default:
-                            child.visible = false;
-                            break;
-                    }
-                    break;
+        // Match JavaFX implementation exactly:
+        // - MEDIUM: shows low-LOD substitutes, hides switch matrix, shows low-LOD wires, hides individual wires
+        // - HIGH: shows switch matrix, hides low-LOD substitutes, hides low-LOD wires, shows individual wires  
+        // - LOW: does nothing (leaves everything as-is)
+        
+        switch (lod) {
+            case LodLevel.MEDIUM:
+                // JavaFX MEDIUM case logic
+                for (const child of tileContainer.children) {
+                    if (!child.userData) continue;
                     
-                case LodLevel.MEDIUM:
-                    // Show tile, switch matrices, and low-LOD wire substitutes
+                    const childType = child.userData.type;
                     switch (childType) {
-                        case 'tile':           // Tile outline
-                        case 'switchMatrix':   // Switch matrix details
-                        case 'lowLodWires':    // Low-LOD wire rectangles
-                            child.visible = true;
+                        case 'lowLodSubstitute':
+                            child.visible = true;   // Show low-LOD substitute
                             break;
-                        case 'lowLodSubstitute': // Hide switch matrix substitute
-                        case 'bel':            // Hide BELs
-                        case 'port':           // Hide ports
-                        case 'internalWire':   // Hide internal wires
-                            child.visible = false;
+                        case 'switchMatrix':
+                            child.visible = false;  // Hide detailed switch matrix
                             break;
-                        default:
-                            child.visible = false;
+                        case 'internalWire':
+                            child.visible = false;  // Hide individual wire lines (Line nodes in JavaFX)
                             break;
+                        case 'lowLodWires':
+                            child.visible = true;   // Show low-LOD wire rectangles
+                            break;
+                        // Leave other elements unchanged (tile, bel, port)
                     }
-                    break;
+                }
+                break;
+                
+            case LodLevel.HIGH:
+                // JavaFX HIGH case logic
+                for (const child of tileContainer.children) {
+                    if (!child.userData) continue;
                     
-                case LodLevel.HIGH:
-                    // Show all details
+                    const childType = child.userData.type;
                     switch (childType) {
-                        case 'tile':           // Tile outline
-                        case 'switchMatrix':   // Switch matrix details
-                        case 'bel':            // BEL details
-                        case 'port':           // Port details
-                        case 'internalWire':   // Internal BEL-to-port wires
-                            child.visible = true;
+                        case 'switchMatrix':
+                            child.visible = true;   // Show detailed switch matrix
                             break;
-                        case 'lowLodSubstitute': // Hide low-LOD substitutes
-                        case 'lowLodWires':    // Hide low-LOD wire rectangles
-                            child.visible = false;
+                        case 'lowLodSubstitute':
+                            child.visible = false;  // Hide low-LOD substitute
                             break;
-                        default:
-                            child.visible = true;
+                        case 'internalWire':
+                            child.visible = true;   // Show individual wire lines
                             break;
+                        case 'lowLodWires':
+                            child.visible = false;  // Hide low-LOD wire rectangles
+                            break;
+                        // Leave other elements unchanged (tile, bel, port)
                     }
-                    break;
-            }
+                }
+                break;
+                
+            case LodLevel.LOW:
+            default:
+                // JavaFX LOW case (default) - do nothing, leave everything as-is
+                // This prevents the "white block" issue by not forcing visibility changes at very low zoom
+                break;
         }
     }
 
@@ -318,5 +330,6 @@ export class ViewportCullingLODManager {
         this.tileContainers = [];
         this.currentGeometry = null;
         this.currentLOD = DEFAULT_LOD_LEVEL;
+        this.lastLODUpdate = 0;
     }
 }

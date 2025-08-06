@@ -100,11 +100,6 @@ export class ViewportManager {
             this.scheduleViewportUpdate();
         });
 
-        // Also listen to frame updates to catch any missed viewport changes
-        this.viewport.on('frame-end', () => {
-            this.scheduleViewportUpdate();
-        });
-
         // Listen to wheel events which might not trigger moved/zoomed
         this.viewport.on('wheel', () => {
             if (DEBUG_CONSTANTS.LOG_VIEWPORT_EVENTS) {
@@ -112,6 +107,11 @@ export class ViewportManager {
             }
             this.scheduleViewportUpdate();
         });
+
+        // Also trigger an immediate update on initialization
+        setTimeout(() => {
+            this.forceViewportUpdate();
+        }, 100);
     }
 
     private scheduleViewportUpdate(): void {
@@ -156,24 +156,32 @@ export class ViewportManager {
     public zoomIn(): void {
         setTimeout(() => {
             this.viewport.zoomPercent(ZOOM_IN_FACTOR, true);
+            // Force update after zoom animation completes
+            setTimeout(() => this.forceViewportUpdate(), ZOOM_ANIMATION_DELAY_MS + 50);
         }, ZOOM_ANIMATION_DELAY_MS);
     }
 
     public zoomOut(): void {
         setTimeout(() => {
             this.viewport.zoomPercent(ZOOM_OUT_FACTOR, true);
+            // Force update after zoom animation completes
+            setTimeout(() => this.forceViewportUpdate(), ZOOM_ANIMATION_DELAY_MS + 50);
         }, ZOOM_ANIMATION_DELAY_MS);
     }
 
     public zoomToFit(): void {
         setTimeout(() => {
             this.viewport.fitWorld();
+            // Force update after fit animation completes
+            setTimeout(() => this.forceViewportUpdate(), CENTER_ANIMATION_DELAY_MS + 50);
         }, CENTER_ANIMATION_DELAY_MS);
     }
 
     public zoomReset(): void {
         setTimeout(() => {
             this.viewport.setZoom(ZOOM_RESET_LEVEL, true);
+            // Force update after zoom animation completes
+            setTimeout(() => this.forceViewportUpdate(), ZOOM_ANIMATION_DELAY_MS + 50);
         }, ZOOM_ANIMATION_DELAY_MS);
     }
 
@@ -188,6 +196,8 @@ export class ViewportManager {
     public panTo(x: number, y: number): void {
         setTimeout(() => {
             this.viewport.moveCenter(x, y);
+            // Force update after pan animation completes
+            setTimeout(() => this.forceViewportUpdate(), CENTER_ANIMATION_DELAY_MS + 50);
         }, CENTER_ANIMATION_DELAY_MS);
     }
 
@@ -204,6 +214,8 @@ export class ViewportManager {
         const centerX = bounds.x + bounds.width / 2;
         const centerY = bounds.y + bounds.height / 2;
         this.panTo(centerX, centerY);
+        // Additional force update since panTo already handles it, but ensure callback triggers
+        setTimeout(() => this.forceViewportUpdate(), CENTER_ANIMATION_DELAY_MS + 100);
     }
 
     // =============================================================================

@@ -19,6 +19,9 @@ export enum LodLevel {
 /** LOD update threshold to avoid unnecessary recalculations */
 export const LOD_UPDATE_THRESHOLD = 0.01;
 
+/** LOD update throttle interval in milliseconds (matching JavaFX 40ms) */
+export const LOD_UPDATE_THROTTLE_MS = 40;
+
 /** Default LOD level when no zoom is applied */
 export const DEFAULT_LOD_LEVEL = 1;
 
@@ -158,7 +161,7 @@ export const PERFORMANCE_CONSTANTS = {
 
 /** Debug and development settings */
 export const DEBUG_CONSTANTS = {
-    LOG_VIEWPORT_EVENTS: true,    // Enable viewport event logging
+    LOG_VIEWPORT_EVENTS: false,   // Enable viewport event logging
     LOG_LOD_CHANGES: false,       // Enable LOD change logging
     LOG_CULLING_STATS: false,     // Enable culling statistics logging
     SHOW_PERFORMANCE_STATS: false, // Show performance metrics
