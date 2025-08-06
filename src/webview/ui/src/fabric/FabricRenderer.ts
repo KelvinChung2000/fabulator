@@ -3,14 +3,22 @@ import { Viewport } from 'pixi-viewport';
 import { FabricGeometry, TileGeometry, Location, WireGeometry } from '../types/geometry';
 import { DesignData, DesignUtils, DiscreteLocation, ConnectedPorts } from '../types/design';
 
-// Level of Detail thresholds
-const LOD_THRESHOLDS = {
-    HIDE_PORTS: 0.1,      // Hide ports when zoom < 10%
-    HIDE_WIRES: 0.2,      // Hide detailed wires when zoom < 20%
-    HIDE_BELS: 0.05,      // Hide BELs when zoom < 5%
-    SHOW_LOW_LOD: 0.3,    // Show low LOD elements when zoom < 30%
-    SHOW_LABELS: 1.0      // Show text labels when zoom >= 100%
-};
+// Level of Detail system matching Java implementation
+enum LodLevel {
+    LOW = 0.15,     // for Bels (Rect -> Rects) - show only low-LOD rectangles
+    MEDIUM = 0.5,   // for Wires (Rect -> Lines) - show low-LOD substitutes  
+    HIGH = 1.7      // for Ports (Line -> Circles) - show all details
+}
+
+function getLodLevel(zoomLevel: number): LodLevel {
+    if (zoomLevel < LodLevel.LOW) {
+        return LodLevel.LOW;
+    } else if (zoomLevel < LodLevel.MEDIUM) {
+        return LodLevel.MEDIUM;
+    } else {
+        return LodLevel.HIGH;
+    }
+}
 
 export class FabricRenderer {
     private app: Application;
@@ -23,27 +31,72 @@ export class FabricRenderer {
     private currentLOD: number = 1;
     private culledObjects: Set<Container> = new Set();
     
+    // Wire management (matching Java WireManager)
+    private highlightedWires: Set<Graphics> = new Set();
+    private readonly DEFAULT_WIRE_COLOR = 0xFFFFFF; // White
+    private readonly DEFAULT_WIRE_WIDTH = 0.2;
+    
     // Event callbacks
-    private onViewportChangeCallback?: (bounds: { x: number, y: number, width: number, height: number }, zoom: number) => void;ication, Graphics, Container, Sprite, FederatedPointerEvent } from 'pixi.js';
-import { FabricGeometry, TileGeometry, Location, WireGeometry } from '../types/geometry';
-import { DesignData, DesignUtils, DiscreteLocation, ConnectedPorts } from '../types/design';
-
-export class FabricRenderer {
-    private app: Application;
-    private fabricContainer: Container;
-    private designContainer: Container;
-    private tileContainers: Container[][] = [];
-    private currentGeometry: FabricGeometry | null = null;
-    private currentDesign: DesignData | null = null;
-    private zoomLevel: number = 1;
-    private viewportBounds: { x: number, y: number, width: number, height: number } = { x: 0, y: 0, width: 0, height: 0 };
+    private onViewportChangeCallback?: (bounds: { x: number, y: number, width: number, height: number }, zoom: number) => void;
 
     constructor(app: Application) {
         this.app = app;
+        
+        // Create viewport with pixi-viewport
+        this.viewport = new Viewport({
+            screenWidth: app.screen.width,
+            screenHeight: app.screen.height,
+            worldWidth: 10000,
+            worldHeight: 10000,
+            events: app.renderer.events
+        });
+
+        // Enable viewport plugins
+        this.viewport
+            .drag({ mouseButtons: 'left' })
+            .pinch()
+            .wheel()
+            .decelerate();
+
+        // Create containers within viewport
         this.fabricContainer = new Container();
         this.designContainer = new Container();
-        this.app.stage.addChild(this.fabricContainer);
-        this.app.stage.addChild(this.designContainer);
+        this.viewport.addChild(this.fabricContainer);
+        this.viewport.addChild(this.designContainer);
+        
+        // Add viewport to stage
+        this.app.stage.addChild(this.viewport);
+
+        // Set up viewport event listeners
+        this.setupViewportEvents();
+    }
+
+    private setupViewportEvents(): void {
+        // Listen to viewport changes for LOD updates
+        this.viewport.on('moved', () => {
+            this.updateLOD();
+            this.notifyViewportChange();
+        });
+
+        this.viewport.on('zoomed', () => {
+            this.updateLOD();
+            this.notifyViewportChange();
+        });
+    }
+
+    private notifyViewportChange(): void {
+        if (this.onViewportChangeCallback) {
+            const bounds = this.viewport.getVisibleBounds();
+            const zoom = this.viewport.scale.x;
+            this.onViewportChangeCallback(
+                { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
+                zoom
+            );
+        }
+    }
+
+    public setViewportChangeCallback(callback: (bounds: { x: number, y: number, width: number, height: number }, zoom: number) => void): void {
+        this.onViewportChangeCallback = callback;
     }
 
     public loadFabric(geometry: FabricGeometry): void {
@@ -51,6 +104,7 @@ export class FabricRenderer {
         this.clearFabric();
         this.buildFabric();
         this.centerFabric();
+        this.updateLOD();
     }
 
     public loadDesign(designData: DesignData): void {
@@ -70,6 +124,196 @@ export class FabricRenderer {
     private clearFabric(): void {
         this.fabricContainer.removeChildren();
         this.tileContainers = [];
+        this.culledObjects.clear();
+    }
+
+    // Zoom control methods
+    public zoomIn(): void {
+        this.viewport.zoomPercent(0.25, true);
+    }
+
+    public zoomOut(): void {
+        this.viewport.zoomPercent(-0.2, true);
+    }
+
+    public zoomToFit(): void {
+        if (this.currentGeometry) {
+            this.viewport.fitWorld(true);
+        }
+    }
+
+    public zoomReset(): void {
+        this.viewport.setZoom(1, true);
+    }
+
+    public getZoomLevel(): number {
+        return this.viewport.scale.x;
+    }
+
+    public panTo(x: number, y: number): void {
+        this.viewport.moveCenter(x, y);
+    }
+
+    public getViewportBounds(): { x: number, y: number, width: number, height: number } {
+        const bounds = this.viewport.getVisibleBounds();
+        return { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height };
+    }
+
+    private updateLOD(): void {
+        const zoomLevel = this.viewport.scale.x;
+        if (Math.abs(this.currentLOD - zoomLevel) < 0.01) return; // Avoid unnecessary updates
+        
+        this.currentLOD = zoomLevel;
+        this.applyCulling();
+        this.applyLevelOfDetail();
+        this.updateWireThickness(zoomLevel);
+    }
+    
+    // Wire management methods matching Java WireManager
+    public highlightWire(wire: Graphics, color: number): void {
+        wire.tint = color;
+        this.highlightedWires.add(wire);
+    }
+    
+    public unHighlightWire(wire: Graphics): void {
+        wire.tint = this.DEFAULT_WIRE_COLOR;
+        this.highlightedWires.delete(wire);
+    }
+    
+    private updateWireThickness(zoomLevel: number): void {
+        // Matching Java's exponential thickness calculation
+        const LARGEST_THICKNESS = 4;
+        const SMALLEST_THICKNESS = 0.2;
+        
+        const newThickness = (LARGEST_THICKNESS - SMALLEST_THICKNESS) * Math.exp(-zoomLevel) + SMALLEST_THICKNESS;
+        
+        for (const wire of this.highlightedWires) {
+            // Update stroke width for highlighted wires
+            wire.clear();
+            // Re-draw with new thickness - this is simplified, full implementation would store original path
+        }
+    }
+
+    private applyCulling(): void {
+        if (!this.currentGeometry) return;
+
+        const visibleBounds = this.viewport.getVisibleBounds();
+        const { tileLocations, tileGeomMap, tileNames } = this.currentGeometry;
+        
+        // Cull tiles that are outside viewport (matching Java logic)
+        for (let y = 0; y < this.tileContainers.length; y++) {
+            for (let x = 0; x < this.tileContainers[y].length; x++) {
+                const tileContainer = this.tileContainers[y][x];
+                if (!tileContainer) continue;
+
+                // Get tile bounds from geometry (matching Java)
+                const tileLocation = tileLocations[y][x];
+                const tileName = tileNames[y][x];
+                
+                if (tileLocation && tileName) {
+                    const tileGeometry = tileGeomMap[tileName];
+                    if (tileGeometry) {
+                        const tileBounds = {
+                            x: tileLocation.x,
+                            y: tileLocation.y,
+                            width: tileGeometry.width,
+                            height: tileGeometry.height
+                        };
+                        
+                        const isVisible = this.boundsIntersect(tileBounds, visibleBounds);
+                        
+                        if (isVisible && this.culledObjects.has(tileContainer)) {
+                            tileContainer.visible = true;
+                            this.culledObjects.delete(tileContainer);
+                        } else if (!isVisible && !this.culledObjects.has(tileContainer)) {
+                            tileContainer.visible = false;
+                            this.culledObjects.add(tileContainer);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private boundsIntersect(tileBounds: any, viewportBounds: any): boolean {
+        // Exact bounds intersection logic from Java
+        return !(tileBounds.x + tileBounds.width < viewportBounds.x ||
+                viewportBounds.x + viewportBounds.width < tileBounds.x ||
+                tileBounds.y + tileBounds.height < viewportBounds.y ||
+                viewportBounds.y + viewportBounds.height < tileBounds.y);
+    }
+
+    private applyLevelOfDetail(): void {
+        const zoom = this.currentLOD;
+        
+        // Apply LOD to all tile containers
+        for (let y = 0; y < this.tileContainers.length; y++) {
+            for (let x = 0; x < this.tileContainers[y].length; x++) {
+                const tileContainer = this.tileContainers[y][x];
+                if (!tileContainer || this.culledObjects.has(tileContainer)) continue;
+
+                this.applyTileLOD(tileContainer, zoom);
+            }
+        }
+    }
+
+    private applyTileLOD(tileContainer: Container, zoom: number): void {
+        const lod = getLodLevel(zoom);
+        
+        tileContainer.children.forEach(child => {
+            const childType = (child as any).userData?.type;
+            
+            switch (lod) {
+                case LodLevel.LOW:
+                    // LOW: Hide almost everything, show only basic tile rectangles
+                    switch (childType) {
+                        case 'tile':
+                            child.visible = true;
+                            break;
+                        default:
+                            child.visible = false;
+                    }
+                    break;
+                    
+                case LodLevel.MEDIUM:
+                    // MEDIUM: Show low-LOD substitutes, hide detailed elements
+                    switch (childType) {
+                        case 'tile':
+                        case 'lowLodSubstitute':
+                        case 'lowLodWire':
+                            child.visible = true;
+                            break;
+                        case 'switchMatrix':
+                        case 'bel':
+                        case 'port':
+                        case 'wire':
+                            child.visible = false;
+                            break;
+                        default:
+                            child.visible = false;
+                    }
+                    break;
+                    
+                case LodLevel.HIGH:
+                    // HIGH: Show all details
+                    switch (childType) {
+                        case 'tile':
+                        case 'switchMatrix':
+                        case 'bel':
+                        case 'port':
+                        case 'wire':
+                            child.visible = true;
+                            break;
+                        case 'lowLodSubstitute':
+                        case 'lowLodWire':
+                            child.visible = false;
+                            break;
+                        default:
+                            child.visible = true;
+                    }
+                    break;
+            }
+        });
     }
 
     private buildDesignOverlay(): void {
@@ -137,6 +381,9 @@ export class FabricRenderer {
             this.onDesignConnectionClick(ports, location);
         });
 
+        // Add LOD metadata
+        (connectionLine as any).userData = { type: 'designConnection' };
+
         // Add to design container (separate from fabric)
         this.designContainer.addChild(connectionLine);
         
@@ -160,9 +407,16 @@ export class FabricRenderer {
     }
 
     private buildFabric(): void {
-        if (!this.currentGeometry) return;
+        if (!this.currentGeometry) {
+            console.error('buildFabric called but no geometry available');
+            return;
+        }
 
+        console.log('Building fabric with geometry:', this.currentGeometry.name);
         const { tileNames, tileLocations, tileGeomMap } = this.currentGeometry;
+        console.log('Tile names array size:', tileNames.length, 'x', tileNames[0]?.length);
+        console.log('Tile locations array size:', tileLocations.length, 'x', tileLocations[0]?.length);
+        console.log('TileGeomMap keys:', Object.keys(tileGeomMap));
 
         // Initialize tile containers array
         for (let y = 0; y < tileNames.length; y++) {
@@ -172,6 +426,7 @@ export class FabricRenderer {
             }
         }
 
+        let tilesCreated = 0;
         // Create tiles
         for (let y = 0; y < tileNames.length; y++) {
             for (let x = 0; x < tileNames[y].length; x++) {
@@ -182,10 +437,48 @@ export class FabricRenderer {
                     const tileGeometry = tileGeomMap[tileName];
                     if (tileGeometry) {
                         this.createTile(tileGeometry, tileLocation, x, y);
+                        tilesCreated++;
                     }
                 }
             }
         }
+        console.log(`Created ${tilesCreated} tiles`);
+        
+        // Add boundary markers (matching Java)
+        this.buildMarkers();
+    }
+    
+    private buildMarkers(): void {
+        if (!this.currentGeometry) return;
+        
+        // Fabric boundary markers with large padding (matching Java's 2^16)
+        const MARKER_PADDING = Math.pow(2, 16);
+        
+        const topLeft = new Graphics();
+        topLeft.rect(0, 0, 0, 0);
+        topLeft.fill(0x000000); // Transparent
+        topLeft.x = -MARKER_PADDING;
+        topLeft.y = -MARKER_PADDING;
+        
+        const topRight = new Graphics();
+        topRight.rect(0, 0, 0, 0);
+        topRight.fill(0x000000); // Transparent
+        topRight.x = this.currentGeometry.width + MARKER_PADDING;
+        topRight.y = -MARKER_PADDING;
+        
+        const bottomLeft = new Graphics();
+        bottomLeft.rect(0, 0, 0, 0);
+        bottomLeft.fill(0x000000); // Transparent
+        bottomLeft.x = -MARKER_PADDING;
+        bottomLeft.y = this.currentGeometry.height + MARKER_PADDING;
+        
+        const bottomRight = new Graphics();
+        bottomRight.rect(0, 0, 0, 0);
+        bottomRight.fill(0x000000); // Transparent
+        bottomRight.x = this.currentGeometry.width + MARKER_PADDING;
+        bottomRight.y = this.currentGeometry.height + MARKER_PADDING;
+        
+        this.fabricContainer.addChild(topLeft, topRight, bottomLeft, bottomRight);
     }
 
     private createTile(tileGeometry: TileGeometry, location: Location, fabricX: number, fabricY: number): void {
@@ -193,11 +486,13 @@ export class FabricRenderer {
         tileContainer.x = location.x;
         tileContainer.y = location.y;
 
-        // Create tile rectangle
+        // Create tile rectangle with proper colors and opacity (matching JavaFX)
         const tileRect = new Graphics();
+        const tileColor = this.getTileColor(tileGeometry.name);
+        console.log(`Tile ${tileGeometry.name} at (${fabricX}, ${fabricY}) color: 0x${tileColor.toString(16)}`);
         tileRect.rect(0, 0, tileGeometry.width, tileGeometry.height);
-        tileRect.fill(this.getTileColor(tileGeometry.name));
-        tileRect.stroke({ width: 1, color: 0x666666, alpha: 0.8 });
+        tileRect.fill({ color: tileColor, alpha: 0.4 }); // Increased alpha for better visibility
+        tileRect.stroke({ width: 1.0, color: 0xD3D3D3, alpha: 0.9 }); // LIGHTGRAY stroke, stronger
         
         // Make tile interactive
         tileRect.eventMode = 'static';
@@ -206,11 +501,14 @@ export class FabricRenderer {
             this.onTileClick(tileGeometry, fabricX, fabricY);
         });
 
+        // Add LOD metadata
+        (tileRect as any).userData = { type: 'tile' };
         tileContainer.addChild(tileRect);
 
         // Create switch matrix if present
         if (tileGeometry.smGeometry) {
             this.createSwitchMatrix(tileGeometry.smGeometry, tileContainer);
+            this.createLowLodSubstitute(tileGeometry.smGeometry, tileContainer);
         }
 
         // Create BELs
@@ -223,15 +521,8 @@ export class FabricRenderer {
             this.createWire(wireGeometry, tileContainer);
         }
 
-        // Create low LOD wires
-        for (const lowLodWire of tileGeometry.lowLodWiresGeoms) {
-            this.createLowLodWire(lowLodWire, tileContainer, false);
-        }
-
-        // Create low LOD overlays
-        for (const lowLodOverlay of tileGeometry.lowLodOverlays) {
-            this.createLowLodWire(lowLodOverlay, tileContainer, true);
-        }
+        // Create low LOD wires group
+        this.createLowLodWiresGroup(tileGeometry, tileContainer);
 
         this.fabricContainer.addChild(tileContainer);
     }
@@ -239,8 +530,8 @@ export class FabricRenderer {
     private createSwitchMatrix(smGeometry: any, tileContainer: Container): void {
         const smRect = new Graphics();
         smRect.rect(0, 0, smGeometry.width, smGeometry.height);
-        smRect.fill(0x2a2a2a);
-        smRect.stroke({ width: 1, color: 0x888888, alpha: 0.6 });
+        smRect.fill({ color: 0x2a2a2a, alpha: 0.8 }); // Semi-transparent dark fill
+        smRect.stroke({ width: 1, color: 0x888888, alpha: 0.9 }); // More visible stroke
         smRect.x = smGeometry.relX;
         smRect.y = smGeometry.relY;
 
@@ -250,6 +541,9 @@ export class FabricRenderer {
         smRect.on('pointerdown', () => {
             this.onSwitchMatrixClick(smGeometry);
         });
+
+        // Add LOD metadata
+        (smRect as any).userData = { type: 'switchMatrix' };
 
         tileContainer.addChild(smRect);
 
@@ -266,8 +560,8 @@ export class FabricRenderer {
     private createBel(belGeometry: any, tileContainer: Container): void {
         const belRect = new Graphics();
         belRect.rect(0, 0, belGeometry.width, belGeometry.height);
-        belRect.fill(0x4a4a4a);
-        belRect.stroke({ width: 1, color: 0xaaaaaa, alpha: 0.7 });
+        belRect.fill({ color: 0x4a4a4a, alpha: 0.7 }); // More visible BEL fill
+        belRect.stroke({ width: 1, color: 0xaaaaaa, alpha: 0.9 }); // Stronger stroke
         belRect.x = belGeometry.relX;
         belRect.y = belGeometry.relY;
 
@@ -277,6 +571,9 @@ export class FabricRenderer {
         belRect.on('pointerdown', () => {
             this.onBelClick(belGeometry);
         });
+
+        // Add LOD metadata
+        (belRect as any).userData = { type: 'bel' };
 
         tileContainer.addChild(belRect);
 
@@ -288,8 +585,9 @@ export class FabricRenderer {
 
     private createPort(port: any, tileContainer: Container, parent: any): void {
         const portCircle = new Graphics();
-        portCircle.circle(0, 0, 2);
-        portCircle.fill(this.getPortColor(port));
+        portCircle.circle(0, 0, 3); // Slightly larger ports for visibility
+        portCircle.fill({ color: this.getPortColor(port), alpha: 0.8 });
+        portCircle.stroke({ width: 0.5, color: 0x000000, alpha: 0.6 }); // Black outline
         portCircle.x = parent.relX + port.relX;
         portCircle.y = parent.relY + port.relY;
 
@@ -300,114 +598,153 @@ export class FabricRenderer {
             this.onPortClick(port);
         });
 
+        // Add LOD metadata
+        (portCircle as any).userData = { type: 'port' };
+
         tileContainer.addChild(portCircle);
     }
 
     private createWire(wireGeometry: WireGeometry, tileContainer: Container): void {
-        const wireGraphics = new Graphics();
         const path = wireGeometry.path;
-
         if (path.length < 2) return;
 
-        wireGraphics.moveTo(path[0].x, path[0].y);
-        for (let i = 1; i < path.length; i++) {
-            wireGraphics.lineTo(path[i].x, path[i].y);
+        // Create wire segments matching Java's approach (path counter counts down)
+        for (let pathCounter = path.length; pathCounter >= 2; pathCounter--) {
+            const start = path[pathCounter - 1];
+            const end = path[pathCounter - 2];
+
+            const wireGraphics = new Graphics();
+            wireGraphics.moveTo(start.x, start.y);
+            wireGraphics.lineTo(end.x, end.y);
+            wireGraphics.stroke({ width: this.DEFAULT_WIRE_WIDTH * 2, color: this.DEFAULT_WIRE_COLOR, alpha: 0.8 }); // Thicker, more visible wires
+
+            // Make wire interactive
+            wireGraphics.eventMode = 'static';
+            wireGraphics.cursor = 'pointer';
+            wireGraphics.on('pointerdown', () => {
+                this.onWireClick(wireGeometry);
+            });
+
+            // Add LOD metadata and wire name
+            (wireGraphics as any).userData = { type: 'wire', wireName: wireGeometry.name };
+
+            tileContainer.addChild(wireGraphics);
         }
-        wireGraphics.stroke({ width: 0.5, color: 0x888888, alpha: 0.6 });
-
-        // Make wire interactive
-        wireGraphics.eventMode = 'static';
-        wireGraphics.cursor = 'pointer';
-        wireGraphics.on('pointerdown', () => {
-            this.onWireClick(wireGeometry);
-        });
-
-        tileContainer.addChild(wireGraphics);
     }
 
-    private createLowLodWire(lowLodWire: any, tileContainer: Container, isOverlay: boolean): void {
-        const wireRect = new Graphics();
-        wireRect.rect(0, 0, lowLodWire.width, lowLodWire.height);
+    private createLowLodSubstitute(smGeometry: any, tileContainer: Container): void {
+        // Create low-LOD substitute rectangle for switch matrix (matching Java)
+        const lowLodRect = new Graphics();
+        lowLodRect.rect(0, 0, smGeometry.width, smGeometry.height);
+        lowLodRect.fill(0x000000); // Black fill
+        lowLodRect.stroke({ width: 1, color: 0xFFFFFF }); // White stroke
+        lowLodRect.x = smGeometry.relX;
+        lowLodRect.y = smGeometry.relY;
+
+        // Add LOD metadata
+        (lowLodRect as any).userData = { type: 'lowLodSubstitute' };
+
+        // Start hidden (will be shown in MEDIUM LOD)
+        lowLodRect.visible = false;
+        tileContainer.addChild(lowLodRect);
+    }
+
+    private createLowLodWiresGroup(tileGeometry: TileGeometry, tileContainer: Container): void {
+        // Create grouped low-LOD wires container (matching Java)
+        const lowLodWiresGroup = new Container();
+        (lowLodWiresGroup as any).userData = { type: 'lowLodWire' };
         
-        if (isOverlay) {
-            wireRect.fill(0x5a5a5a);
-            wireRect.stroke({ width: 1, color: 0x5a5a5a });
-        } else {
-            wireRect.fill(0x323232);
-            wireRect.stroke({ width: 1, color: 0x323232 });
+        // Add low-LOD wire rectangles
+        for (const lowLodWire of tileGeometry.lowLodWiresGeoms) {
+            const wireRect = new Graphics();
+            wireRect.rect(0, 0, lowLodWire.width, lowLodWire.height);
+            wireRect.fill(0x323232); // rgb(50,50,50)
+            wireRect.stroke({ width: 2, color: 0x323232 });
+            wireRect.x = lowLodWire.relX;
+            wireRect.y = lowLodWire.relY;
+            lowLodWiresGroup.addChild(wireRect);
         }
-        
-        wireRect.x = lowLodWire.relX;
-        wireRect.y = lowLodWire.relY;
 
-        tileContainer.addChild(wireRect);
-    }
-
-    private getTileColor(tileName: string): number {
-        // Simple hash-based color generation
-        let hash = 0;
-        for (let i = 0; i < tileName.length; i++) {
-            hash = tileName.charCodeAt(i) + ((hash << 5) - hash);
+        // Add low-LOD overlay rectangles
+        for (const lowLodOverlay of tileGeometry.lowLodOverlays) {
+            const overlayRect = new Graphics();
+            overlayRect.rect(0, 0, lowLodOverlay.width, lowLodOverlay.height);
+            overlayRect.fill(0x5A5A5A); // rgb(90,90,90)
+            overlayRect.stroke({ width: 2, color: 0x5A5A5A });
+            overlayRect.x = lowLodOverlay.relX;
+            overlayRect.y = lowLodOverlay.relY;
+            lowLodWiresGroup.addChild(overlayRect);
         }
-        
-        // Generate a color with good contrast
-        const hue = Math.abs(hash) % 360;
-        return this.hslToHex(hue, 30, 25); // Low saturation, dark
-    }
 
-    private getPortColor(port: any): number {
-        if (port.io === 'I') {
-            return 0x4CAF50; // Green for input
-        } else if (port.io === 'O') {
-            return 0xF44336; // Red for output
-        }
-        return 0xFFEB3B; // Yellow for unknown
-    }
-
-    private hslToHex(h: number, s: number, l: number): number {
-        l /= 100;
-        const a = s * Math.min(l, 1 - l) / 100;
-        const f = (n: number) => {
-            const k = (n + h / 30) % 12;
-            const color = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
-            return Math.round(255 * color);
-        };
-        return (f(0) << 16) | (f(8) << 8) | f(4);
+        // Start hidden (will be shown in MEDIUM LOD)
+        lowLodWiresGroup.visible = false;
+        tileContainer.addChild(lowLodWiresGroup);
     }
 
     private centerFabric(): void {
         if (!this.currentGeometry) return;
 
-        const screenWidth = this.app.screen.width;
-        const screenHeight = this.app.screen.height;
-        const fabricWidth = this.currentGeometry.width;
-        const fabricHeight = this.currentGeometry.height;
-
-        // Fit fabric to screen with padding
-        const scaleX = (screenWidth * 0.8) / fabricWidth;
-        const scaleY = (screenHeight * 0.8) / fabricHeight;
-        const scale = Math.min(scaleX, scaleY, 0.5); // Limit max scale for large fabrics
-
-        this.fabricContainer.scale.set(scale);
+        // Set viewport world size to fabric size
+        this.viewport.resize(this.app.screen.width, this.app.screen.height, this.currentGeometry.width, this.currentGeometry.height);
         
-        // Center the scaled fabric
-        this.fabricContainer.x = (screenWidth - fabricWidth * scale) / 2;
-        this.fabricContainer.y = (screenHeight - fabricHeight * scale) / 2;
+        // Fit the world in the viewport
+        this.viewport.fitWorld(true);
 
-        console.log(`Fabric centered: ${fabricWidth}x${fabricHeight} at scale ${scale.toFixed(3)}`);
+        console.log(`Fabric centered: ${this.currentGeometry.width}x${this.currentGeometry.height} at scale ${this.viewport.scale.x.toFixed(3)}`);
     }
 
-    public updateLod(zoomLevel: number, viewportBounds: any): void {
-        this.zoomLevel = zoomLevel;
-        this.viewportBounds = viewportBounds;
+    private getTileColor(tileName: string): number {
+        // Semantic tile coloring matching Java TileColorUtils
+        const nameUpper = tileName.toUpperCase();
         
-        // TODO: Implement LOD system based on zoom level
-        // For now, show everything
+        if (nameUpper.includes('TERM')) {
+            return 0xD3D3D3; // LIGHTGRAY
+        } else if (nameUpper.includes('IO')) {
+            return 0xFFFFE0; // LIGHTYELLOW
+        } else if (nameUpper.includes('LUT')) {
+            return 0xADD8E6; // LIGHTBLUE
+        } else if (nameUpper.includes('REG')) {
+            return 0xCD5C5C; // INDIANRED
+        } else if (nameUpper.includes('DSP')) {
+            return 0x90EE90; // LIGHTGREEN
+        } else {
+            return 0x9370DB; // MEDIUMPURPLE (default)
+        }
     }
 
-    public destroy(): void {
-        this.fabricContainer.destroy({ children: true });
-        this.designContainer.destroy({ children: true });
+    private getPortColor(port: any): number {
+        // Color based on port I/O direction
+        if (port.io === 'INPUT') return 0x00ff00; // Green
+        if (port.io === 'OUTPUT') return 0xff0000; // Red
+        return 0xffff00; // Yellow for unknown/inout
+    }
+
+    private hslToHex(h: number, s: number, l: number): number {
+        const c = (1 - Math.abs(2 * l / 100 - 1)) * s / 100;
+        const x = c * (1 - Math.abs((h / 60) % 2 - 1));
+        const m = l / 100 - c / 2;
+
+        let r = 0, g = 0, b = 0;
+
+        if (0 <= h && h < 60) {
+            r = c; g = x; b = 0;
+        } else if (60 <= h && h < 120) {
+            r = x; g = c; b = 0;
+        } else if (120 <= h && h < 180) {
+            r = 0; g = c; b = x;
+        } else if (180 <= h && h < 240) {
+            r = 0; g = x; b = c;
+        } else if (240 <= h && h < 300) {
+            r = x; g = 0; b = c;
+        } else if (300 <= h && h < 360) {
+            r = c; g = 0; b = x;
+        }
+
+        r = Math.round((r + m) * 255);
+        g = Math.round((g + m) * 255);
+        b = Math.round((b + m) * 255);
+
+        return (r << 16) | (g << 8) | b;
     }
 
     // Event handlers
@@ -436,5 +773,11 @@ export class FabricRenderer {
 
     private onWireClick(wireGeometry: WireGeometry): void {
         console.log(`Wire clicked`);
+    }
+
+    public destroy(): void {
+        this.fabricContainer.destroy({ children: true });
+        this.designContainer.destroy({ children: true });
+        this.viewport.destroy({ children: true });
     }
 }

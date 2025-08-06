@@ -2,9 +2,24 @@ import * as vscode from 'vscode';
 import { FabricWebviewProvider } from './webview/FabricWebviewProvider';
 import { GeometryParser } from './parsers/GeometryParser';
 import { FasmParser } from './parsers/FasmParser';
+import { FabricExplorerProvider, FabricElementData } from './sidebar/FabricExplorerProvider';
+import { SearchPanel } from './sidebar/SearchPanel';
 
 export function activate(context: vscode.ExtensionContext) {
 	console.log('FABulator extension is now active!');
+
+	// Create sidebar providers
+	const fabricExplorerProvider = new FabricExplorerProvider(context);
+	const searchPanel = new SearchPanel(context.extensionUri);
+
+	// Register sidebar providers
+	vscode.window.registerTreeDataProvider('fabulator.fabricExplorer', fabricExplorerProvider);
+	vscode.window.registerWebviewViewProvider('fabulator.searchPanel', searchPanel);
+
+	// Connect search panel to fabric explorer
+	searchPanel.setSearchCallback((searchTerm: string) => {
+		fabricExplorerProvider.setSearchFilter(searchTerm);
+	});
 
 	// Keep track of active webview panels
 	let currentFabricPanel: vscode.WebviewPanel | undefined = undefined;
@@ -173,7 +188,81 @@ export function activate(context: vscode.ExtensionContext) {
 		vscode.window.showInformationMessage('Hello World from FABulator!');
 	});
 
-	context.subscriptions.push(openFabricCommand, openDesignCommand, helloWorldCommand);
+	// Sidebar command handlers
+	const selectFabricFileCommand = vscode.commands.registerCommand('fabulator.selectFabricFile', async () => {
+		const options: vscode.OpenDialogOptions = {
+			canSelectMany: false,
+			openLabel: 'Select Fabric File',
+			filters: {
+				'CSV files': ['csv'],
+				'All files': ['*']
+			}
+		};
+
+		const fileUri = await vscode.window.showOpenDialog(options);
+		if (fileUri && fileUri[0]) {
+			try {
+				// Load into sidebar
+				await fabricExplorerProvider.loadFabricFile(fileUri[0].fsPath);
+
+				// Always create/show the main webview panel and load the fabric
+				const panel = getOrCreateWebviewPanel();
+				
+				const parser = new GeometryParser(fileUri[0].fsPath);
+				const geometry = await parser.parse();
+				
+				const geometryData = {
+					...geometry,
+					tileGeomMap: Object.fromEntries(geometry.tileGeomMap)
+				};
+				
+				panel.webview.postMessage({
+					type: 'loadFabric',
+					data: geometryData
+				});
+				
+				vscode.window.showInformationMessage(`Successfully loaded fabric: ${geometry.name}`);
+			} catch (error) {
+				vscode.window.showErrorMessage(`Failed to load fabric file: ${error}`);
+			}
+		}
+	});
+
+	const refreshSidebarCommand = vscode.commands.registerCommand('fabulator.refreshSidebar', () => {
+		fabricExplorerProvider.refresh();
+		searchPanel.clearSearch();
+		vscode.window.showInformationMessage('Sidebar refreshed');
+	});
+
+	const highlightElementCommand = vscode.commands.registerCommand('fabulator.highlightElement', async (element: FabricElementData) => {
+		console.log('Highlight element:', element);
+		
+		// Get or create the webview panel
+		const panel = getOrCreateWebviewPanel();
+		
+		// Send highlight message to webview
+		panel.webview.postMessage({
+			type: 'highlightElement',
+			data: element
+		});
+
+		// Show info message
+		let message = `Highlighting ${element.type}: ${element.name}`;
+		if (element.position) {
+			message += ` at (${element.position.x}, ${element.position.y})`;
+		}
+		vscode.window.showInformationMessage(message);
+	});
+
+	// Register commands
+	context.subscriptions.push(
+		openFabricCommand, 
+		openDesignCommand, 
+		helloWorldCommand,
+		selectFabricFileCommand,
+		refreshSidebarCommand,
+		highlightElementCommand
+	);
 }
 
 // This method is called when your extension is deactivated

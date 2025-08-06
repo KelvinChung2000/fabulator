@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { FasmParser } from './FasmParser';
+import { FasmParser } from '../parsers/FasmParser';
 import { DesignUtils } from '../types/design';
 import * as fs from 'fs/promises';
 import * as path from 'path';

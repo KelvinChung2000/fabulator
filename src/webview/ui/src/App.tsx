@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react'
+import React, { useEffect, useRef, useCallback } from 'react'
 import FabricViewer from './components/FabricViewer'
 
 declare global {
@@ -14,11 +14,10 @@ declare global {
 function App() {
   const vscode = useRef(window.acquireVsCodeApi())
 
-  // VS Code API is available through the FabricViewer component
-
-  const handleSendMessage = (message: any) => {
+  // Memoize the message handler to prevent FabricViewer from remounting
+  const handleSendMessage = useCallback((message: any) => {
     vscode.current.postMessage(message)
-  }
+  }, [])
 
   return (
     <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>

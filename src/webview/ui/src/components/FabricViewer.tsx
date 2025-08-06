@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { Application } from 'pixi.js'
-import { EnhancedFabricRenderer } from '../fabric/EnhancedFabricRenderer'
+import { FabricRenderer } from '../fabric/FabricRenderer'
 import { ZoomControls } from './ZoomControls'
 import { WorldView } from './WorldView'
 import { FabricGeometry } from '../types/geometry'
@@ -13,7 +13,8 @@ interface FabricViewerProps {
 const FabricViewer: React.FC<FabricViewerProps> = ({ onMessage }) => {
   const canvasRef = useRef<HTMLDivElement>(null)
   const appRef = useRef<Application | null>(null)
-  const rendererRef = useRef<EnhancedFabricRenderer | null>(null)
+  const rendererRef = useRef<FabricRenderer | null>(null)
+  const isInitializedRef = useRef(false)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [currentFabric, setCurrentFabric] = useState<string | null>(null)
@@ -22,7 +23,16 @@ const FabricViewer: React.FC<FabricViewerProps> = ({ onMessage }) => {
   const [zoomLevel, setZoomLevel] = useState(1)
   const [viewportBounds, setViewportBounds] = useState({ x: 0, y: 0, width: 100, height: 100 })
 
+  // Debug component lifecycle
+  console.log('FabricViewer render - refs status:', {
+    canvasRef: !!canvasRef.current,
+    appRef: !!appRef.current,
+    rendererRef: !!rendererRef.current,
+    isInitialized: isInitializedRef.current
+  })
+
   useEffect(() => {
+    console.log('FabricViewer mounted/effect running')
     if (!canvasRef.current) return
 
     // Ensure container has dimensions
@@ -111,14 +121,41 @@ const FabricViewer: React.FC<FabricViewerProps> = ({ onMessage }) => {
         appRef.current = app
 
         // Create enhanced fabric renderer
-        const renderer = new EnhancedFabricRenderer(app)
-        rendererRef.current = renderer
+        console.log('Creating FabricRenderer...')
+        try {
+          const renderer = new FabricRenderer(app)
+          rendererRef.current = renderer
+          console.log('FabricRenderer created successfully:', renderer)
+        } catch (rendererError) {
+          console.error('Failed to create FabricRenderer:', rendererError)
+          throw rendererError
+        }
+
+        // Add a simple test graphic to verify PIXI.js is working
+        const testGraphics = new (await import('pixi.js')).Graphics()
+        testGraphics.beginFill(0xff0000) // Red color
+        testGraphics.drawCircle(100, 100, 50) // Circle at (100,100) with radius 50
+        testGraphics.endFill()
+        app.stage.addChild(testGraphics)
+        console.log('Test red circle added to stage')
+
+          // Store reference to test graphics for debugging
+          ; (window as any).testGraphics = testGraphics
+
+        // Send ready message to extension
+        onMessage({ type: 'ready', message: 'Webview and PIXI.js initialized successfully' })
+        
+        // Mark as initialized
+        isInitializedRef.current = true
+        console.log('PIXI.js fully initialized and marked as ready')
 
         // Set up viewport change callback
-        renderer.setViewportChangeCallback((bounds, zoom) => {
-          setViewportBounds(bounds)
-          setZoomLevel(zoom)
-        })
+        if (rendererRef.current) {
+          rendererRef.current.setViewportChangeCallback((bounds, zoom) => {
+            setViewportBounds(bounds)
+            setZoomLevel(zoom)
+          })
+        }
 
         // Handle resize
         const handleResize = () => {
@@ -214,6 +251,8 @@ const FabricViewer: React.FC<FabricViewerProps> = ({ onMessage }) => {
     initPixi()
 
     return () => {
+      console.log('FabricViewer cleanup - destroying instances')
+      isInitializedRef.current = false
       if (appRef.current) {
         appRef.current.destroy(true)
         appRef.current = null
@@ -223,35 +262,81 @@ const FabricViewer: React.FC<FabricViewerProps> = ({ onMessage }) => {
         rendererRef.current = null
       }
     }
-  }, [onMessage])
+  }, []) // Remove onMessage from dependency array
 
   // Listen for messages from the extension
   useEffect(() => {
+    console.log('Setting up message handler')
     const messageHandler = (event: MessageEvent) => {
       const message = event.data
+      console.log('Received message in webview:', message)
       switch (message.type) {
         case 'loadFabric':
+          console.log('Loading fabric with data:', message.data)
           handleLoadFabric(message.data)
           break
         case 'loadDesign':
+          console.log('Loading design with data:', message.data)
           handleLoadDesign(message.data)
+          break
+        case 'highlightElement':
+          console.log('Highlighting element:', message.data)
+          handleHighlightElement(message.data)
           break
       }
     }
 
     window.addEventListener('message', messageHandler)
-    return () => window.removeEventListener('message', messageHandler)
+    return () => {
+      console.log('Cleaning up message handler')
+      window.removeEventListener('message', messageHandler)
+    }
   }, [])
 
   const handleLoadFabric = (fabricData: FabricGeometry) => {
-    if (!rendererRef.current) return
+    console.log('handleLoadFabric called with:', fabricData)
+    console.log('Renderer status:', {
+      rendererExists: !!rendererRef.current,
+      appExists: !!appRef.current,
+      canvasExists: !!canvasRef.current,
+      isInitialized: isInitializedRef.current
+    })
 
-    setIsLoading(true)
+    // Check if we're not yet initialized - defer the call
+    if (!isInitializedRef.current) {
+      console.log('Not yet initialized, deferring fabric load...')
+      setTimeout(() => handleLoadFabric(fabricData), 100)
+      return
+    }
+
+    // Change test circle to green to show we received data
+    const testGraphics = (window as any).testGraphics
+    if (testGraphics) {
+      testGraphics.clear()
+      testGraphics.beginFill(0x00ff00) // Green color
+      testGraphics.drawCircle(100, 100, 50)
+      testGraphics.endFill()
+      console.log('Changed test circle to green - fabric data received!')
+    }
+    
+    if (!rendererRef.current) {
+      console.error('No renderer available!')
+      console.error('Debug info:', {
+        rendererRef: rendererRef.current,
+        appRef: appRef.current,
+        canvasContainer: canvasRef.current,
+        canvasChildren: canvasRef.current?.children.length,
+        stageChildren: appRef.current?.stage.children.length,
+        isInitialized: isInitializedRef.current
+      })
+      return
+    }    setIsLoading(true)
     try {
       console.log('Loading fabric:', fabricData.name)
       rendererRef.current.loadFabric(fabricData)
       setCurrentFabric(fabricData.name)
       setCurrentGeometry(fabricData)
+      console.log('Fabric loaded successfully, sending fabricLoaded message')
       onMessage({
         type: 'fabricLoaded',
         data: {
@@ -345,8 +430,92 @@ const FabricViewer: React.FC<FabricViewerProps> = ({ onMessage }) => {
     }
   }
 
+  // Handler for highlighting elements from sidebar
+  const handleHighlightElement = (elementData: any) => {
+    if (!rendererRef.current || !currentGeometry) {
+      console.log('Cannot highlight: renderer or geometry not available')
+      return
+    }
+
+    console.log('Highlighting element:', elementData)
+
+    // Handle different element types
+    switch (elementData.type) {
+      case 'tile':
+        if (elementData.position) {
+          // Pan to tile and highlight it
+          const { tileLocations, tileGeomMap, tileNames } = currentGeometry
+          const tileLocation = tileLocations[elementData.position.y][elementData.position.x]
+          const tileName = tileNames[elementData.position.y][elementData.position.x]
+          
+          if (tileLocation && tileName) {
+            const tileGeometry = tileGeomMap[tileName]
+            if (tileGeometry) {
+              // Pan to tile center
+              const centerX = tileLocation.x + tileGeometry.width / 2
+              const centerY = tileLocation.y + tileGeometry.height / 2
+              rendererRef.current.panTo(centerX, centerY)
+              
+              // You could add highlighting effect here
+              console.log(`Panned to tile ${tileName} at (${centerX}, ${centerY})`)
+            }
+          }
+        }
+        break
+        
+      case 'bel':
+      case 'switchMatrix':
+      case 'port':
+      case 'wire':
+        // For now, just log - could implement specific highlighting
+        console.log(`Highlighting ${elementData.type}: ${elementData.name}`)
+        break
+        
+      case 'net':
+        // Could highlight all connections in a net
+        console.log(`Highlighting net: ${elementData.name}`)
+        break
+        
+      default:
+        console.log(`Highlighting not implemented for type: ${elementData.type}`)
+    }
+  }
+
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
+      {/* Main Canvas - moved to top to be the base layer */}
+      <div
+        ref={canvasRef}
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          width: '100%',
+          height: '100%',
+          backgroundColor: 'var(--vscode-editor-background)',
+          zIndex: 1
+        }}
+      />
+
+      {/* Debug info */}
+      <div style={{
+        position: 'absolute',
+        top: '8px',
+        right: '240px', // Move left to avoid overlapping with zoom controls
+        background: 'var(--vscode-textBlockQuote-background)',
+        color: 'var(--vscode-textBlockQuote-foreground)',
+        padding: '8px',
+        borderRadius: '4px',
+        fontSize: '12px',
+        zIndex: 1100,
+        fontFamily: 'monospace'
+      }}>
+        <div>PIXI App: {appRef.current ? 'Initialized' : 'Not initialized'}</div>
+        <div>Renderer: {rendererRef.current ? 'Ready' : 'Not ready'}</div>
+        <div>Canvas: {canvasRef.current?.children.length || 0} children</div>
+        <div>Error: {error ? 'Yes' : 'No'}</div>
+      </div>
+
       {error && (
         <div style={{
           position: 'absolute',
@@ -360,7 +529,7 @@ const FabricViewer: React.FC<FabricViewerProps> = ({ onMessage }) => {
           borderRadius: '4px',
           textAlign: 'center',
           maxWidth: '400px',
-          zIndex: 10
+          zIndex: 1200
         }}>
           <div style={{ fontWeight: 'bold', marginBottom: '8px' }}>Graphics Engine Error</div>
           <div style={{ fontSize: '14px' }}>{error}</div>
@@ -377,7 +546,7 @@ const FabricViewer: React.FC<FabricViewerProps> = ({ onMessage }) => {
           left: '50%',
           transform: 'translate(-50%, -50%)',
           color: 'var(--vscode-foreground)',
-          zIndex: 10
+          zIndex: 1200
         }}>
           Loading fabric...
         </div>
@@ -394,7 +563,7 @@ const FabricViewer: React.FC<FabricViewerProps> = ({ onMessage }) => {
           padding: '4px 8px',
           borderRadius: '3px',
           fontSize: '12px',
-          zIndex: 10
+          zIndex: 1100
         }}>
           Fabric: {currentFabric}
         </div>
@@ -411,7 +580,7 @@ const FabricViewer: React.FC<FabricViewerProps> = ({ onMessage }) => {
           padding: '4px 8px',
           borderRadius: '3px',
           fontSize: '12px',
-          zIndex: 10
+          zIndex: 1100
         }}>
           Design: {currentDesign}
         </div>
@@ -430,7 +599,7 @@ const FabricViewer: React.FC<FabricViewerProps> = ({ onMessage }) => {
         />
       )}
 
-      {/* WorldView Minimap */}
+      {/* WorldView Minimap - positioned in bottom right */}
       {currentGeometry && (
         <div style={{
           position: 'absolute',
@@ -445,18 +614,8 @@ const FabricViewer: React.FC<FabricViewerProps> = ({ onMessage }) => {
           />
         </div>
       )}
-
-      {/* Main Canvas */}
-      <div
-        ref={canvasRef}
-        style={{
-          width: '100%',
-          height: '100%',
-          backgroundColor: 'var(--vscode-editor-background)'
-        }}
-      />
     </div>
   )
 }
 
-export default FabricViewer
+export default React.memo(FabricViewer)

@@ -26,8 +26,47 @@
       {
         "command": "fabulator.helloWorld",
         "title": "Hello World"
+      },
+      {
+        "command": "fabulator.selectFabricFile",
+        "title": "Select Fabric File",
+        "icon": "$(file-code)"
+      },
+      {
+        "command": "fabulator.refreshSidebar",
+        "title": "Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "fabulator.highlightElement",
+        "title": "Highlight in Viewer",
+        "icon": "$(eye)"
       }
     ],
+    "views": {
+      "fabulator-sidebar": [
+        {
+          "id": "fabulator.searchPanel",
+          "name": "Search",
+          "type": "webview",
+          "when": "true"
+        },
+        {
+          "id": "fabulator.fabricExplorer",
+          "name": "Fabric Explorer",
+          "when": "true"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "fabulator-sidebar",
+          "title": "FABulator",
+          "icon": "$(circuit-board)"
+        }
+      ]
+    },
     "menus": {
       "commandPalette": [
         {
@@ -37,6 +76,25 @@
         {
           "command": "fabulator.openDesign",
           "title": "FABulator: Open Design"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "fabulator.selectFabricFile",
+          "when": "view == fabulator.fabricExplorer",
+          "group": "navigation@1"
+        },
+        {
+          "command": "fabulator.refreshSidebar",
+          "when": "view == fabulator.fabricExplorer",
+          "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "fabulator.highlightElement",
+          "when": "view == fabulator.fabricExplorer && viewItem =~ /^(tile|bel|switchMatrix|port|wire)$/",
+          "group": "navigation"
         }
       ]
     }
