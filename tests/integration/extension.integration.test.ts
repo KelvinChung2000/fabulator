@@ -27,7 +27,7 @@ describe('Extension Integration Tests', () => {
 
   describe('End-to-end fabric loading workflow', () => {
     it('should parse geometry file and prepare data for webview', async () => {
-      const testGeometryPath = path.join(__dirname, '../test/fixtures/test-geometry.csv');
+      const testGeometryPath = path.join(__dirname, '../fixtures/test-geometry.csv');
       
       // Step 1: Parse geometry file (simulating extension host)
       const parser = new GeometryParser(testGeometryPath);
@@ -67,7 +67,7 @@ describe('Extension Integration Tests', () => {
     });
 
     it('should handle large eFPGA geometry file efficiently', async () => {
-      const eFPGAPath = path.join(__dirname, '../../tests/eFPGA_geometry.csv');
+      const eFPGAPath = path.join(__dirname, '../eFPGA_geometry.csv');
       
       const startTime = Date.now();
       const parser = new GeometryParser(eFPGAPath);
@@ -124,7 +124,7 @@ Name,MalformedTest
 InvalidParam,InvalidValue`;
       
       const fs = await import('fs/promises');
-      const tempPath = path.join(__dirname, '../test/fixtures/malformed-integration.csv');
+      const tempPath = path.join(__dirname, '../fixtures/malformed-integration.csv');
       await fs.writeFile(tempPath, malformedCSV);
       
       try {
@@ -143,7 +143,7 @@ InvalidParam,InvalidValue`;
 
     it('should handle empty geometry file', async () => {
       const fs = await import('fs/promises');
-      const tempPath = path.join(__dirname, '../test/fixtures/empty-integration.csv');
+      const tempPath = path.join(__dirname, '../fixtures/empty-integration.csv');
       await fs.writeFile(tempPath, '');
       
       try {
@@ -163,7 +163,7 @@ InvalidParam,InvalidValue`;
 
   describe('Data consistency tests', () => {
     it('should maintain data integrity through parse→serialize→parse cycle', async () => {
-      const testGeometryPath = path.join(__dirname, '../test/fixtures/test-geometry.csv');
+      const testGeometryPath = path.join(__dirname, '../fixtures/test-geometry.csv');
       
       // First parse
       const parser1 = new GeometryParser(testGeometryPath);
@@ -224,7 +224,7 @@ Width,100
 Height,100`;
       
       const fs = await import('fs/promises');
-      const tempPath = path.join(__dirname, '../test/fixtures/edge-case-integration.csv');
+      const tempPath = path.join(__dirname, '../fixtures/edge-case-integration.csv');
       await fs.writeFile(tempPath, edgeCaseCSV);
       
       try {
@@ -250,7 +250,7 @@ Height,100`;
 
   describe('Performance and memory tests', () => {
     it('should handle multiple parse operations efficiently', async () => {
-      const testGeometryPath = path.join(__dirname, '../test/fixtures/test-geometry.csv');
+      const testGeometryPath = path.join(__dirname, '../fixtures/test-geometry.csv');
       
       const parseOperations = [];
       const iterations = 10;
@@ -278,7 +278,7 @@ Height,100`;
     });
 
     it('should clean up resources properly', async () => {
-      const testGeometryPath = path.join(__dirname, '../test/fixtures/test-geometry.csv');
+      const testGeometryPath = path.join(__dirname, '../fixtures/test-geometry.csv');
       
       // Parse and immediately discard multiple times
       for (let i = 0; i < 5; i++) {

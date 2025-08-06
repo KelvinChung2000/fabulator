@@ -7,7 +7,7 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
-    setupFiles: './src/webview/ui/src/test/setup.ts',
+    setupFiles: './tests/setup.ts',
     include: ['src/webview/ui/src/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}'],
     exclude: ['node_modules', 'out'],
     coverage: {
@@ -15,7 +15,6 @@ export default defineConfig({
       include: ['src/webview/ui/src/**/*.{js,ts,jsx,tsx}'],
       exclude: [
         'node_modules/',
-        'src/webview/ui/src/test/',
         '**/*.d.ts',
         '**/*.test.ts',
         '**/*.spec.ts'

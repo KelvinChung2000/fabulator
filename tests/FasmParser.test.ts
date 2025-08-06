@@ -5,7 +5,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 
 describe('FasmParser', () => {
-    const testDataDir = path.join(__dirname, '../test/fixtures');
+    const testDataDir = path.join(__dirname, './fixtures');
     const testFasmPath = path.join(testDataDir, 'test_design.fasm');
 
     beforeEach(async () => {

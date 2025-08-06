@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { FabricRenderer } from './FabricRenderer';
-import { FabricGeometry, TileGeometry, Location } from '../types/geometry';
+import { FabricRenderer } from '../src/webview/ui/src/fabric/FabricRenderer';
+import { FabricGeometry, TileGeometry, Location } from '../src/types/geometry';
 
 // Mock Pixi.js
 vi.mock('pixi.js', () => ({
@@ -66,6 +66,79 @@ vi.mock('pixi-viewport', () => ({
   }))
 }));
 
+// Mock the new modular components
+vi.mock('../src/webview/ui/src/fabric/ViewportManager', () => ({
+  ViewportManager: vi.fn().mockImplementation(() => ({
+    getViewport: vi.fn(() => ({
+      addChild: vi.fn(),
+      removeChild: vi.fn(),
+      scale: { x: 1, y: 1 },
+      getVisibleBounds: vi.fn(() => ({ x: 0, y: 0, width: 800, height: 600 }))
+    })),
+    setViewportChangeCallback: vi.fn(),
+    forceViewportUpdate: vi.fn(),
+    zoomIn: vi.fn(),
+    zoomOut: vi.fn(),
+    zoomToFit: vi.fn(),
+    zoomReset: vi.fn(),
+    getZoomLevel: vi.fn(() => 1),
+    panTo: vi.fn(),
+    getViewportBounds: vi.fn(() => ({ x: 0, y: 0, width: 800, height: 600 })),
+    centerOnBounds: vi.fn(),
+    destroy: vi.fn()
+  }))
+}));
+
+vi.mock('../src/webview/ui/src/fabric/ViewportCullingLODManager', () => ({
+  ViewportCullingLODManager: vi.fn().mockImplementation(() => ({
+    initializeForGeometry: vi.fn(),
+    updateLOD: vi.fn(),
+    forceCullingUpdate: vi.fn(),
+    disableCulling: vi.fn(),
+    highlightWire: vi.fn(),
+    unHighlightWire: vi.fn(),
+    getCurrentLOD: vi.fn(() => 1),
+    getCurrentLODLevel: vi.fn(() => 'HIGH'),
+    getVisibleTileCount: vi.fn(() => 4),
+    getCulledObjectsCount: vi.fn(() => 0),
+    destroy: vi.fn()
+  }))
+}));
+
+vi.mock('../src/webview/ui/src/fabric/TileRenderer', () => ({
+  TileRenderer: vi.fn().mockImplementation(() => ({
+    buildFabric: vi.fn(() => [[]]),
+    setTileClickCallback: vi.fn(),
+    setSwitchMatrixClickCallback: vi.fn(),
+    setBelClickCallback: vi.fn(),
+    setPortClickCallback: vi.fn(),
+    setWireClickCallback: vi.fn(),
+    destroy: vi.fn()
+  }))
+}));
+
+vi.mock('../src/webview/ui/src/fabric/DesignRenderer', () => ({
+  DesignRenderer: vi.fn().mockImplementation(() => ({
+    initializeForGeometry: vi.fn(),
+    buildDesignOverlay: vi.fn(),
+    clearDesign: vi.fn(),
+    setDesignConnectionClickCallback: vi.fn(),
+    highlightNet: vi.fn(),
+    unHighlightAllNets: vi.fn(),
+    getDesignStatistics: vi.fn(() => ({})),
+    destroy: vi.fn()
+  }))
+}));
+
+vi.mock('../src/webview/ui/src/fabric/FabricConstants', () => ({
+  VIEWPORT_INITIAL_UPDATE_DELAY_MS: 100,
+  DEBUG_CONSTANTS: {
+    LOG_VIEWPORT_EVENTS: false,
+    LOG_LOD_CHANGES: false,
+    LOG_CULLING_STATS: false
+  }
+}));
+
 describe('FabricRenderer', () => {
   let mockApp: any;
   let renderer: FabricRenderer;
@@ -125,6 +198,11 @@ describe('FabricRenderer', () => {
       screen: {
         width: 800,
         height: 600
+      },
+      renderer: {
+        events: {
+          domElement: {}
+        }
       }
     };
     
@@ -134,7 +212,7 @@ describe('FabricRenderer', () => {
   describe('initialization', () => {
     it('should create renderer with application and viewport', () => {
       expect(renderer).toBeDefined();
-      expect(mockApp.stage.addChild).toHaveBeenCalled(); // Viewport added to stage
+      // Note: ViewportManager now handles adding viewport to stage internally
     });
   });
 

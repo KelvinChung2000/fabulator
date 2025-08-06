@@ -349,6 +349,7 @@ const FabricViewer: React.FC<FabricViewerProps> = ({ onMessage }) => {
     rendererRef.current?.zoomReset()
   }
 
+
   // WorldView navigation handler
   const handleWorldViewClick = (x: number, y: number) => {
     rendererRef.current?.panTo(x, y)

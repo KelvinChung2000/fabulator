@@ -21,7 +21,6 @@ export default defineConfig({
         'node_modules/',
         'out/',
         'src/webview/ui/',
-        'src/test/',
         '**/*.d.ts',
         '**/*.test.ts',
         '**/*.spec.ts'

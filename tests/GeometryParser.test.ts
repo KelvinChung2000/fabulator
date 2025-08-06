@@ -5,7 +5,7 @@ import * as path from 'path';
 import * as fs from 'fs/promises';
 
 describe('GeometryParser', () => {
-  const testGeometryPath = path.join(__dirname, '../test/fixtures/test-geometry.csv');
+  const testGeometryPath = path.join(__dirname, './fixtures/test-geometry.csv');
 
   describe('Location parsing', () => {
     it('should parse x/y format locations correctly', () => {
@@ -195,7 +195,7 @@ describe('GeometryParser', () => {
 
     it('should handle malformed CSV content', async () => {
       // Create a temporary malformed CSV
-      const malformedPath = path.join(__dirname, '../test/fixtures/malformed.csv');
+      const malformedPath = path.join(__dirname, './fixtures/malformed.csv');
       await fs.writeFile(malformedPath, 'INVALID_CONTENT\ngarbage,data');
       
       const parser = new GeometryParser(malformedPath);
@@ -225,7 +225,7 @@ TestTile
 FABRIC_LOCS
 0/0`;
       
-      const tempPath = path.join(__dirname, '../test/fixtures/empty-lines.csv');
+      const tempPath = path.join(__dirname, './fixtures/empty-lines.csv');
       await fs.writeFile(tempPath, csvWithEmptyLines);
       
       const parser = new GeometryParser(tempPath);
@@ -251,7 +251,7 @@ Null,TestTile
 FABRIC_LOCS
 Null,100/0`;
       
-      const tempPath = path.join(__dirname, '../test/fixtures/null-tiles.csv');
+      const tempPath = path.join(__dirname, './fixtures/null-tiles.csv');
       await fs.writeFile(tempPath, csvWithNulls);
       
       const parser = new GeometryParser(tempPath);

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, waitFor, act } from '@testing-library/react';
-import FabricViewer from './FabricViewer';
-import { FabricGeometry } from '../types/geometry';
+import FabricViewer from '../src/webview/ui/src/components/FabricViewer';
+import { FabricGeometry } from '../src/webview/ui/src/types/geometry';
 
 // Mock FabricRenderer
 vi.mock('../fabric/FabricRenderer', () => ({
@@ -148,7 +148,7 @@ describe('FabricViewer', () => {
 
   it('should handle fabric loading errors gracefully', async () => {
     // Mock FabricRenderer to throw an error before rendering
-    const { FabricRenderer } = await import('../fabric/FabricRenderer');
+    const { FabricRenderer } = await import('../src/webview/ui/src/fabric/FabricRenderer');
     const mockRenderer = {
       loadFabric: vi.fn().mockImplementation(() => {
         throw new Error('Test error');

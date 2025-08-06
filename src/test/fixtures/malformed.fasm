@@ -1,5 +1,0 @@
-# routing for net 'test'
-X0Y1.port_only_two_parts
-X0Y1.too.many.parts.here
-INVALID_LOCATION.port1.port2
-X0Y1.port1.INIT_SKIP_THIS
