@@ -18,8 +18,10 @@ export function activate(context: vscode.ExtensionContext) {
 
 	// Connect search panel to fabric explorer
 	searchPanel.setSearchCallback((searchTerm: string) => {
+		console.log('Extension received search term from SearchPanel:', searchTerm);
 		fabricExplorerProvider.setSearchFilter(searchTerm);
 	});
+	console.log('Search callback connected between SearchPanel and FabricExplorerProvider');
 
 	// Keep track of active webview panels
 	let currentFabricPanel: vscode.WebviewPanel | undefined = undefined;

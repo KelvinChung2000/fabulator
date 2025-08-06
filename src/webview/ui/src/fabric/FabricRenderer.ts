@@ -72,7 +72,7 @@ export class FabricRenderer {
     }
 
     private setupViewportEvents(): void {
-        // Listen to viewport changes for LOD updates
+        // Listen to viewport changes for LOD and culling updates
         this.viewport.on('moved', () => {
             this.updateLOD();
             this.notifyViewportChange();
@@ -82,6 +82,30 @@ export class FabricRenderer {
             this.updateLOD();
             this.notifyViewportChange();
         });
+
+        // Also listen to frame updates to catch any missed viewport changes
+        this.viewport.on('frame-end', () => {
+            this.updateLOD();
+        });
+
+        // Listen to wheel events which might not trigger moved/zoomed
+        this.viewport.on('wheel', () => {
+            // Debounced update to avoid too many calls
+            this.scheduleViewportUpdate();
+        });
+    }
+
+    private viewportUpdateTimeout: number | null = null;
+
+    private scheduleViewportUpdate(): void {
+        if (this.viewportUpdateTimeout) {
+            clearTimeout(this.viewportUpdateTimeout);
+        }
+        this.viewportUpdateTimeout = setTimeout(() => {
+            this.updateLOD();
+            this.notifyViewportChange();
+            this.viewportUpdateTimeout = null;
+        }, 16); // ~60fps
     }
 
     private notifyViewportChange(): void {
@@ -104,7 +128,16 @@ export class FabricRenderer {
         this.clearFabric();
         this.buildFabric();
         this.centerFabric();
+        // Ensure culling and LOD are properly initialized
+        setTimeout(() => {
+            this.updateLOD();
+            this.forceViewportUpdate();
+        }, 100);
+    }
+
+    public forceViewportUpdate(): void {
         this.updateLOD();
+        this.notifyViewportChange();
     }
 
     public loadDesign(designData: DesignData): void {
@@ -139,6 +172,8 @@ export class FabricRenderer {
     public zoomToFit(): void {
         if (this.currentGeometry) {
             this.viewport.fitWorld(true);
+            // Force culling update after fit operation
+            setTimeout(() => this.updateLOD(), 50);
         }
     }
 
@@ -152,6 +187,8 @@ export class FabricRenderer {
 
     public panTo(x: number, y: number): void {
         this.viewport.moveCenter(x, y);
+        // Force culling update after pan operation
+        setTimeout(() => this.updateLOD(), 50);
     }
 
     public getViewportBounds(): { x: number, y: number, width: number, height: number } {
@@ -198,6 +235,18 @@ export class FabricRenderer {
         if (!this.currentGeometry) return;
 
         const visibleBounds = this.viewport.getVisibleBounds();
+        
+        // Add buffer margin to prevent flickering at edges (25% of viewport size)
+        const bufferMarginX = visibleBounds.width * 0.25;
+        const bufferMarginY = visibleBounds.height * 0.25;
+        
+        const cullingBounds = {
+            x: visibleBounds.x - bufferMarginX,
+            y: visibleBounds.y - bufferMarginY,
+            width: visibleBounds.width + (bufferMarginX * 2),
+            height: visibleBounds.height + (bufferMarginY * 2)
+        };
+        
         const { tileLocations, tileGeomMap, tileNames } = this.currentGeometry;
         
         // Cull tiles that are outside viewport (matching Java logic)
@@ -220,12 +269,14 @@ export class FabricRenderer {
                             height: tileGeometry.height
                         };
                         
-                        const isVisible = this.boundsIntersect(tileBounds, visibleBounds);
+                        const isVisible = this.boundsIntersect(tileBounds, cullingBounds);
                         
                         if (isVisible && this.culledObjects.has(tileContainer)) {
+                            // Tile came back into view
                             tileContainer.visible = true;
                             this.culledObjects.delete(tileContainer);
                         } else if (!isVisible && !this.culledObjects.has(tileContainer)) {
+                            // Tile went out of view
                             tileContainer.visible = false;
                             this.culledObjects.add(tileContainer);
                         }
@@ -236,11 +287,23 @@ export class FabricRenderer {
     }
 
     private boundsIntersect(tileBounds: any, viewportBounds: any): boolean {
-        // Exact bounds intersection logic from Java
-        return !(tileBounds.x + tileBounds.width < viewportBounds.x ||
-                viewportBounds.x + viewportBounds.width < tileBounds.x ||
-                tileBounds.y + tileBounds.height < viewportBounds.y ||
-                viewportBounds.y + viewportBounds.height < tileBounds.y);
+        // Exact bounds intersection logic from Java with additional safety checks
+        if (!tileBounds || !viewportBounds) return false;
+        
+        const tileRight = tileBounds.x + tileBounds.width;
+        const tileBottom = tileBounds.y + tileBounds.height;
+        const viewportRight = viewportBounds.x + viewportBounds.width;
+        const viewportBottom = viewportBounds.y + viewportBounds.height;
+        
+        // Check if rectangles don't overlap (return false if they don't)
+        if (tileRight <= viewportBounds.x ||    // Tile is to the left of viewport
+            tileBounds.x >= viewportRight ||     // Tile is to the right of viewport
+            tileBottom <= viewportBounds.y ||    // Tile is above viewport
+            tileBounds.y >= viewportBottom) {    // Tile is below viewport
+            return false;
+        }
+        
+        return true; // Rectangles intersect
     }
 
     private applyLevelOfDetail(): void {
@@ -489,7 +552,6 @@ export class FabricRenderer {
         // Create tile rectangle with proper colors and opacity (matching JavaFX)
         const tileRect = new Graphics();
         const tileColor = this.getTileColor(tileGeometry.name);
-        console.log(`Tile ${tileGeometry.name} at (${fabricX}, ${fabricY}) color: 0x${tileColor.toString(16)}`);
         tileRect.rect(0, 0, tileGeometry.width, tileGeometry.height);
         tileRect.fill({ color: tileColor, alpha: 0.4 }); // Increased alpha for better visibility
         tileRect.stroke({ width: 1.0, color: 0xD3D3D3, alpha: 0.9 }); // LIGHTGRAY stroke, stronger
@@ -776,8 +838,17 @@ export class FabricRenderer {
     }
 
     public destroy(): void {
+        // Clean up timers
+        if (this.viewportUpdateTimeout) {
+            clearTimeout(this.viewportUpdateTimeout);
+            this.viewportUpdateTimeout = null;
+        }
+        
+        // Clean up containers and viewport
         this.fabricContainer.destroy({ children: true });
         this.designContainer.destroy({ children: true });
         this.viewport.destroy({ children: true });
+        
+        console.log('FabricRenderer destroyed with proper cleanup');
     }
 }

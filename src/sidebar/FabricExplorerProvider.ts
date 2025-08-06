@@ -89,9 +89,12 @@ export class FabricExplorerProvider implements vscode.TreeDataProvider<FabricEle
     }
 
     setSearchFilter(filter: string): void {
+        console.log('FabricExplorerProvider.setSearchFilter called with:', filter);
         this.searchFilter = filter.toLowerCase();
+        console.log('Search filter set to:', this.searchFilter);
         this.buildTreeData();
         this.refresh();
+        console.log('Tree refreshed after search filter applied');
     }
 
     async loadFabricFile(filePath: string): Promise<void> {
@@ -142,9 +145,12 @@ export class FabricExplorerProvider implements vscode.TreeDataProvider<FabricEle
         this.treeData = [];
 
         if (!this.currentGeometry) {
+            const message = this.searchFilter ? 
+                `No results found for "${this.searchFilter}" - no fabric loaded` : 
+                'No fabric loaded';
             this.treeData.push({
                 type: 'section',
-                name: 'No fabric loaded',
+                name: message,
                 description: 'Use the file icon to select a fabric CSV file',
                 children: []
             });
@@ -211,7 +217,8 @@ export class FabricExplorerProvider implements vscode.TreeDataProvider<FabricEle
 
                 if (tileName && tileLocation) {
                     const tileGeometry = tileGeomMap.get ? tileGeomMap.get(tileName) : (tileGeomMap as any)[tileName];
-                    if (tileGeometry && this.matchesSearchFilter(tileName)) {
+                    // Show tile if it matches or if no filter is set
+                    if (tileGeometry && (!this.searchFilter || this.matchesSearchFilter(tileName))) {
                         tiles.push({
                             type: 'tile',
                             name: `${tileName} [${x},${y}]`,
@@ -242,14 +249,18 @@ export class FabricExplorerProvider implements vscode.TreeDataProvider<FabricEle
         const entries = tileGeomMap.entries ? Array.from(tileGeomMap.entries()) : Object.entries(tileGeomMap);
         
         for (const [tileName, tileGeometry] of entries) {
-            if (!this.matchesSearchFilter(tileName)) continue;
+            // Check if tile or any of its children match
+            const tileMatches = this.matchesSearchFilter(tileName);
+            const hasMatchingChildren = this.searchFilter && this.tileHasMatchingChildren(tileGeometry);
+            
+            if (!tileMatches && !hasMatchingChildren && this.searchFilter) continue;
 
             const children: FabricElementData[] = [];
 
-            // Add BELs
+            // Add BELs - show all if no search filter, or filter if searching
             if (tileGeometry.belGeometryList.length > 0) {
                 const bels: FabricElementData[] = tileGeometry.belGeometryList
-                    .filter((bel: BelGeometry) => this.matchesSearchFilter(bel.name))
+                    .filter((bel: BelGeometry) => this.searchFilter ? this.matchesSearchFilter(bel.name) : true)
                     .map((bel: BelGeometry) => ({
                         type: 'bel' as TreeItemType,
                         name: bel.name,
@@ -416,7 +427,48 @@ export class FabricExplorerProvider implements vscode.TreeDataProvider<FabricEle
 
     private matchesSearchFilter(text: string): boolean {
         if (!this.searchFilter) return true;
-        return text.toLowerCase().includes(this.searchFilter);
+        const matches = text.toLowerCase().includes(this.searchFilter);
+        if (matches && this.searchFilter) {
+            console.log(`Search match found: "${text}" matches filter "${this.searchFilter}"`);
+        }
+        return matches;
+    }
+
+    private tileHasMatchingChildren(tileGeometry: TileGeometry): boolean {
+        if (!this.searchFilter) return false;
+        
+        // Check BELs
+        if (tileGeometry.belGeometryList.some((bel: BelGeometry) => this.matchesSearchFilter(bel.name))) {
+            return true;
+        }
+        
+        // Check switch matrix
+        if (tileGeometry.smGeometry && this.matchesSearchFilter(tileGeometry.smGeometry.name)) {
+            return true;
+        }
+        
+        // Check wires
+        if (tileGeometry.wireGeometryList.some((wire: WireGeometry) => this.matchesSearchFilter(wire.name))) {
+            return true;
+        }
+        
+        // Check ports in BELs and switch matrix
+        for (const bel of tileGeometry.belGeometryList) {
+            if (bel.portGeometryList.some((port: PortGeometry) => this.matchesSearchFilter(port.name))) {
+                return true;
+            }
+        }
+        
+        if (tileGeometry.smGeometry) {
+            if (tileGeometry.smGeometry.portGeometryList.some((port: PortGeometry) => this.matchesSearchFilter(port.name))) {
+                return true;
+            }
+            if (tileGeometry.smGeometry.jumpPortGeometryList.some((port: PortGeometry) => this.matchesSearchFilter(port.name))) {
+                return true;
+            }
+        }
+        
+        return false;
     }
 
     getTreeItem(element: FabricElementData): vscode.TreeItem {

@@ -131,20 +131,9 @@ const FabricViewer: React.FC<FabricViewerProps> = ({ onMessage }) => {
           throw rendererError
         }
 
-        // Add a simple test graphic to verify PIXI.js is working
-        const testGraphics = new (await import('pixi.js')).Graphics()
-        testGraphics.beginFill(0xff0000) // Red color
-        testGraphics.drawCircle(100, 100, 50) // Circle at (100,100) with radius 50
-        testGraphics.endFill()
-        app.stage.addChild(testGraphics)
-        console.log('Test red circle added to stage')
-
-          // Store reference to test graphics for debugging
-          ; (window as any).testGraphics = testGraphics
-
         // Send ready message to extension
         onMessage({ type: 'ready', message: 'Webview and PIXI.js initialized successfully' })
-        
+
         // Mark as initialized
         isInitializedRef.current = true
         console.log('PIXI.js fully initialized and marked as ready')
@@ -309,16 +298,6 @@ const FabricViewer: React.FC<FabricViewerProps> = ({ onMessage }) => {
       return
     }
 
-    // Change test circle to green to show we received data
-    const testGraphics = (window as any).testGraphics
-    if (testGraphics) {
-      testGraphics.clear()
-      testGraphics.beginFill(0x00ff00) // Green color
-      testGraphics.drawCircle(100, 100, 50)
-      testGraphics.endFill()
-      console.log('Changed test circle to green - fabric data received!')
-    }
-    
     if (!rendererRef.current) {
       console.error('No renderer available!')
       console.error('Debug info:', {
@@ -330,7 +309,7 @@ const FabricViewer: React.FC<FabricViewerProps> = ({ onMessage }) => {
         isInitialized: isInitializedRef.current
       })
       return
-    }    setIsLoading(true)
+    } setIsLoading(true)
     try {
       console.log('Loading fabric:', fabricData.name)
       rendererRef.current.loadFabric(fabricData)
@@ -447,7 +426,7 @@ const FabricViewer: React.FC<FabricViewerProps> = ({ onMessage }) => {
           const { tileLocations, tileGeomMap, tileNames } = currentGeometry
           const tileLocation = tileLocations[elementData.position.y][elementData.position.x]
           const tileName = tileNames[elementData.position.y][elementData.position.x]
-          
+
           if (tileLocation && tileName) {
             const tileGeometry = tileGeomMap[tileName]
             if (tileGeometry) {
@@ -455,14 +434,14 @@ const FabricViewer: React.FC<FabricViewerProps> = ({ onMessage }) => {
               const centerX = tileLocation.x + tileGeometry.width / 2
               const centerY = tileLocation.y + tileGeometry.height / 2
               rendererRef.current.panTo(centerX, centerY)
-              
+
               // You could add highlighting effect here
               console.log(`Panned to tile ${tileName} at (${centerX}, ${centerY})`)
             }
           }
         }
         break
-        
+
       case 'bel':
       case 'switchMatrix':
       case 'port':
@@ -470,12 +449,12 @@ const FabricViewer: React.FC<FabricViewerProps> = ({ onMessage }) => {
         // For now, just log - could implement specific highlighting
         console.log(`Highlighting ${elementData.type}: ${elementData.name}`)
         break
-        
+
       case 'net':
         // Could highlight all connections in a net
         console.log(`Highlighting net: ${elementData.name}`)
         break
-        
+
       default:
         console.log(`Highlighting not implemented for type: ${elementData.type}`)
     }
@@ -496,25 +475,6 @@ const FabricViewer: React.FC<FabricViewerProps> = ({ onMessage }) => {
           zIndex: 1
         }}
       />
-
-      {/* Debug info */}
-      <div style={{
-        position: 'absolute',
-        top: '8px',
-        right: '240px', // Move left to avoid overlapping with zoom controls
-        background: 'var(--vscode-textBlockQuote-background)',
-        color: 'var(--vscode-textBlockQuote-foreground)',
-        padding: '8px',
-        borderRadius: '4px',
-        fontSize: '12px',
-        zIndex: 1100,
-        fontFamily: 'monospace'
-      }}>
-        <div>PIXI App: {appRef.current ? 'Initialized' : 'Not initialized'}</div>
-        <div>Renderer: {rendererRef.current ? 'Ready' : 'Not ready'}</div>
-        <div>Canvas: {canvasRef.current?.children.length || 0} children</div>
-        <div>Error: {error ? 'Yes' : 'No'}</div>
-      </div>
 
       {error && (
         <div style={{

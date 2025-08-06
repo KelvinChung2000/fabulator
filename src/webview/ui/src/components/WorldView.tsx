@@ -192,12 +192,6 @@ export const WorldView: React.FC<WorldViewProps> = ({
 
     return (
         <div className={`worldview ${className}`}>
-            <div className="worldview-header">
-                <span className="worldview-title">World View</span>
-                <span className="worldview-info">
-                    {geometry ? `${geometry.width} × ${geometry.height}` : 'No fabric loaded'}
-                </span>
-            </div>
             <div className="worldview-canvas-container">
                 <canvas
                     ref={canvasRef}

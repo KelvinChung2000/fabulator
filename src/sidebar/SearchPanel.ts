@@ -33,13 +33,19 @@ export class SearchPanel implements vscode.WebviewViewProvider {
             message => {
                 switch (message.type) {
                     case 'search':
+                        console.log('SearchPanel received search message:', message.value);
                         if (this.searchCallback) {
                             this.searchCallback(message.value);
+                        } else {
+                            console.warn('No search callback set!');
                         }
                         break;
                     case 'clearSearch':
+                        console.log('SearchPanel received clear search message');
                         if (this.searchCallback) {
                             this.searchCallback('');
+                        } else {
+                            console.warn('No search callback set for clear!');
                         }
                         break;
                 }
@@ -193,6 +199,7 @@ export class SearchPanel implements vscode.WebviewViewProvider {
 
                 function doSearch() {
                     const searchValue = searchInput.value.trim();
+                    console.log('SearchPanel doSearch called with:', searchValue);
                     vscode.postMessage({
                         type: 'search',
                         value: searchValue
