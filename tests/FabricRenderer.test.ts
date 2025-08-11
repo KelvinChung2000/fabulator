@@ -97,6 +97,7 @@ vi.mock('../src/webview/ui/src/fabric/ViewportCullingLODManager', () => ({
     disableCulling: vi.fn(),
     highlightWire: vi.fn(),
     unHighlightWire: vi.fn(),
+    setWireThicknessUpdateCallback: vi.fn(),
     getCurrentLOD: vi.fn(() => 1),
     getCurrentLODLevel: vi.fn(() => 'HIGH'),
     getVisibleTileCount: vi.fn(() => 4),
@@ -113,6 +114,13 @@ vi.mock('../src/webview/ui/src/fabric/TileRenderer', () => ({
     setBelClickCallback: vi.fn(),
     setPortClickCallback: vi.fn(),
     setWireClickCallback: vi.fn(),
+    updateWireThickness: vi.fn(),
+    clearAllHighlights: vi.fn(),
+    highlightTileByPosition: vi.fn(),
+    highlightBelInTile: vi.fn(),
+    highlightSwitchMatrixInTile: vi.fn(),
+    highlightPortInTile: vi.fn(),
+    highlightWireInTile: vi.fn(),
     destroy: vi.fn()
   }))
 }));

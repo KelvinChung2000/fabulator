@@ -61,6 +61,11 @@ export class FabricRenderer {
         this.tileRenderer = new TileRenderer(this.fabricContainer);
         this.designRenderer = new DesignRenderer(this.designContainer);
         
+        // Set up wire thickness update callback for LOD manager
+        this.cullingLODManager.setWireThicknessUpdateCallback((tileThickness, smThickness) => {
+            this.tileRenderer.updateWireThickness(tileThickness, smThickness);
+        });
+        
         // Set up viewport change callback to update LOD and culling
         this.viewportManager.setViewportChangeCallback((bounds, zoom) => {
             this.cullingLODManager.updateLOD();
@@ -109,7 +114,9 @@ export class FabricRenderer {
     // =============================================================================
 
     public loadFabric(geometry: FabricGeometry): void {
+        console.log(`🚨🚨🚨 LOAD FABRIC CALLED 🚨🚨🚨`);
         console.log(`🏗️  Loading fabric: ${geometry.name}`);
+        console.log(`    Geometry object:`, geometry);
         
         this.currentGeometry = geometry;
         this.clearFabric();
@@ -204,6 +211,10 @@ export class FabricRenderer {
         this.viewportManager.panTo(x, y);
     }
 
+    public panToImmediate(x: number, y: number): void {
+        this.viewportManager.panToImmediate(x, y);
+    }
+
     public getViewportBounds(): { x: number, y: number, width: number, height: number } {
         return this.viewportManager.getViewportBounds();
     }
@@ -230,7 +241,7 @@ export class FabricRenderer {
     }
 
     // =============================================================================
-    // WIRE HIGHLIGHTING (Delegated to ViewportCullingLODManager)
+    // WIRE HIGHLIGHTING AND THICKNESS (Delegated to ViewportCullingLODManager)
     // =============================================================================
 
     public highlightWire(wire: Graphics, color: number): void {
@@ -239,6 +250,10 @@ export class FabricRenderer {
 
     public unHighlightWire(wire: Graphics): void {
         this.cullingLODManager.unHighlightWire(wire);
+    }
+
+    public updateWireThickness(tileWireThickness: number, switchMatrixWireThickness: number): void {
+        this.tileRenderer.updateWireThickness(tileWireThickness, switchMatrixWireThickness);
     }
 
     // =============================================================================
@@ -251,6 +266,129 @@ export class FabricRenderer {
 
     public unHighlightAllNets(): void {
         this.designRenderer.unHighlightAllNets();
+    }
+
+    // =============================================================================
+    // ELEMENT HIGHLIGHTING
+    // =============================================================================
+
+    public highlightElement(elementData: any): void {
+        this.clearAllHighlights();
+        
+        switch (elementData.type) {
+            case 'tile':
+                this.highlightTile(elementData);
+                break;
+            case 'bel':
+                this.highlightBel(elementData);
+                break;
+            case 'switchMatrix':
+                this.highlightSwitchMatrix(elementData);
+                break;
+            case 'port':
+                this.highlightPort(elementData);
+                break;
+            case 'wire':
+                this.highlightWireElement(elementData);
+                break;
+            case 'net':
+                this.highlightNet(elementData.name);
+                break;
+            default:
+                console.log(`Highlighting not implemented for type: ${elementData.type}`);
+        }
+    }
+
+    public clearAllHighlights(): void {
+        this.tileRenderer.clearAllHighlights();
+        this.unHighlightAllNets();
+    }
+
+    private highlightTile(elementData: any): void {
+        if (!this.currentGeometry || !elementData.position) return;
+        
+        const { tileLocations, tileGeomMap, tileNames } = this.currentGeometry;
+        const tileLocation = tileLocations[elementData.position.y][elementData.position.x];
+        const tileName = tileNames[elementData.position.y][elementData.position.x];
+        
+        if (tileLocation && tileName) {
+            const tileGeometry = tileGeomMap[tileName];
+            if (tileGeometry) {
+                // Pan to tile center
+                const centerX = tileLocation.x + tileGeometry.width / 2;
+                const centerY = tileLocation.y + tileGeometry.height / 2;
+                this.panTo(centerX, centerY);
+                
+                // Highlight the tile
+                this.tileRenderer.highlightTileByPosition(elementData.position.x, elementData.position.y);
+                
+                console.log(`Highlighted and panned to tile ${tileName} at (${centerX}, ${centerY})`);
+            }
+        }
+    }
+
+    private highlightBel(elementData: any): void {
+        if (!elementData.tilePosition) return;
+        
+        // First highlight the containing tile
+        this.highlightTile({ type: 'tile', position: elementData.tilePosition });
+        
+        // Then highlight the specific BEL
+        this.tileRenderer.highlightBelInTile(
+            elementData.tilePosition.x, 
+            elementData.tilePosition.y, 
+            elementData.name
+        );
+        
+        console.log(`Highlighted BEL ${elementData.name} in tile at (${elementData.tilePosition.x}, ${elementData.tilePosition.y})`);
+    }
+
+    private highlightSwitchMatrix(elementData: any): void {
+        if (!elementData.tilePosition) return;
+        
+        // First highlight the containing tile
+        this.highlightTile({ type: 'tile', position: elementData.tilePosition });
+        
+        // Then highlight the switch matrix
+        this.tileRenderer.highlightSwitchMatrixInTile(
+            elementData.tilePosition.x, 
+            elementData.tilePosition.y
+        );
+        
+        console.log(`Highlighted switch matrix in tile at (${elementData.tilePosition.x}, ${elementData.tilePosition.y})`);
+    }
+
+    private highlightPort(elementData: any): void {
+        if (!elementData.tilePosition) return;
+        
+        // First highlight the containing tile
+        this.highlightTile({ type: 'tile', position: elementData.tilePosition });
+        
+        // Then highlight the specific port
+        this.tileRenderer.highlightPortInTile(
+            elementData.tilePosition.x, 
+            elementData.tilePosition.y, 
+            elementData.name,
+            elementData.parentName // BEL or switch matrix name
+        );
+        
+        console.log(`Highlighted port ${elementData.name} in ${elementData.parentName} at tile (${elementData.tilePosition.x}, ${elementData.tilePosition.y})`);
+    }
+
+    private highlightWireElement(elementData: any): void {
+        if (!elementData.tilePosition) return;
+        
+        // First highlight the containing tile
+        this.highlightTile({ type: 'tile', position: elementData.tilePosition });
+        
+        // Then highlight the specific wire
+        this.tileRenderer.highlightWireInTile(
+            elementData.tilePosition.x, 
+            elementData.tilePosition.y, 
+            elementData.name
+        );
+        
+        console.log(`Highlighted wire ${elementData.name} in tile at (${elementData.tilePosition.x}, ${elementData.tilePosition.y})`);
     }
 
     // =============================================================================

@@ -311,8 +311,14 @@ const FabricViewer: React.FC<FabricViewerProps> = ({ onMessage }) => {
       return
     } setIsLoading(true)
     try {
+      console.log(`🚨🚨🚨 ABOUT TO CALL RENDERER LOADFABRIC 🚨🚨🚨`)
       console.log('Loading fabric:', fabricData.name)
+      console.log('Renderer object:', rendererRef.current)
+      console.log('Renderer loadFabric method:', rendererRef.current.loadFabric)
+      
       rendererRef.current.loadFabric(fabricData)
+      
+      console.log(`🚨🚨🚨 RENDERER LOADFABRIC RETURNED 🚨🚨🚨`)
       setCurrentFabric(fabricData.name)
       setCurrentGeometry(fabricData)
       console.log('Fabric loaded successfully, sending fabricLoaded message')
@@ -352,7 +358,10 @@ const FabricViewer: React.FC<FabricViewerProps> = ({ onMessage }) => {
 
   // WorldView navigation handler
   const handleWorldViewClick = (x: number, y: number) => {
-    rendererRef.current?.panTo(x, y)
+    if (!rendererRef.current) return
+    
+    // Use immediate pan for minimap clicks to avoid culling delays
+    rendererRef.current.panToImmediate(x, y)
   }
 
   // Keyboard shortcuts
@@ -447,13 +456,9 @@ const FabricViewer: React.FC<FabricViewerProps> = ({ onMessage }) => {
       case 'switchMatrix':
       case 'port':
       case 'wire':
-        // For now, just log - could implement specific highlighting
-        console.log(`Highlighting ${elementData.type}: ${elementData.name}`)
-        break
-
       case 'net':
-        // Could highlight all connections in a net
-        console.log(`Highlighting net: ${elementData.name}`)
+        // Use the real highlighting system
+        rendererRef.current.highlightElement(elementData)
         break
 
       default:

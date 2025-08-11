@@ -153,12 +153,14 @@ X0Y1.port1.INIT_SKIP_THIS
             expect(net.entries).toHaveLength(0); // All entries should be skipped
         });
 
-        it('should throw on routing without net name', async () => {
+        it('should skip routing without net name', async () => {
             const invalidFasm = path.join(testDataDir, 'no-net.fasm');
             await fs.writeFile(invalidFasm, 'X0Y1.port1.port2\\n');
 
             const parser = new FasmParser(invalidFasm);
-            await expect(parser.parse()).rejects.toThrow('Routing entry found without a net name');
+            const config = await parser.parse();
+            // Should parse successfully but skip the invalid entry
+            expect(config.netMap.size).toBe(0);
         });
 
         it('should throw on non-existent file', async () => {

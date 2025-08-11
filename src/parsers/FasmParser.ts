@@ -67,7 +67,8 @@ export class FasmParser {
 
             this.processRoutingEntry(line);
         } catch (error) {
-            throw new Error(`Error processing line ${lineNumber}: ${line}. ${error}`);
+            // Log the error but continue processing other lines
+            console.warn(`Skipping malformed line ${lineNumber}: ${line}. Error: ${error}`);
         }
     }
 

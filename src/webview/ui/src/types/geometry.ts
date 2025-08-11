@@ -37,6 +37,21 @@ export interface LowLodWiresGeometry {
     height: number;
 }
 
+export interface SwitchMatrixWireGeometry {
+    name: string;
+    sourcePort: string;
+    destPort: string;
+    path: Location[];
+}
+
+export interface SwitchMatrixConnection {
+    sourcePort: string;
+    destPort: string;
+    // Optional path coordinates for visual routing
+    // If not provided, a straight line will be drawn
+    customPath?: Location[];
+}
+
 export interface BelGeometry {
     name: string;
     relX: number;
@@ -57,6 +72,10 @@ export interface SwitchMatrixGeometry {
     csv?: string;
     portGeometryList: PortGeometry[];
     jumpPortGeometryList: PortGeometry[];
+    // Internal wire connections within the switch matrix
+    wireConnections?: SwitchMatrixConnection[];
+    // Generated wire geometries with visual paths
+    switchMatrixWires?: SwitchMatrixWireGeometry[];
 }
 
 export interface TileGeometry {

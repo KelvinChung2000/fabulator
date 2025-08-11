@@ -201,6 +201,18 @@ export class ViewportManager {
         }, CENTER_ANIMATION_DELAY_MS);
     }
 
+    public panToImmediate(x: number, y: number): void {
+        // Immediate pan for minimap navigation without animation delays
+        this.viewport.moveCenter(x, y);
+        // Force immediate culling and viewport updates
+        this.forceViewportUpdate();
+        
+        // Additional safety update after one frame to ensure pixi-viewport has processed the change
+        requestAnimationFrame(() => {
+            this.forceViewportUpdate();
+        });
+    }
+
     public getViewportBounds(): { x: number, y: number, width: number, height: number } {
         const bounds = this.viewport.getVisibleBounds();
         return { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height };

@@ -18,9 +18,12 @@ import {
     LOD_UPDATE_THROTTLE_MS,
     DEFAULT_LOD_LEVEL,
     DEBUG_CONSTANTS,
-    WIRE_CONSTANTS
+    WIRE_CONSTANTS,
+    SWITCH_MATRIX_WIRE_CONSTANTS
 } from './FabricConstants';
 import { FabricGeometry, TileGeometry } from '../types/geometry';
+
+export type WireThicknessUpdateCallback = (tileThickness: number, switchMatrixThickness: number) => void;
 
 export class ViewportCullingLODManager {
     private viewport: Viewport;
@@ -34,9 +37,14 @@ export class ViewportCullingLODManager {
 
     // Wire management for LOD
     private highlightedWires: Set<Graphics> = new Set();
+    private wireThicknessUpdateCallback?: WireThicknessUpdateCallback;
 
     constructor(viewport: Viewport) {
         this.viewport = viewport;
+    }
+
+    public setWireThicknessUpdateCallback(callback: WireThicknessUpdateCallback): void {
+        this.wireThicknessUpdateCallback = callback;
     }
 
     // =============================================================================
@@ -200,30 +208,39 @@ export class ViewportCullingLODManager {
     private applyTileLOD(tileContainer: Container, zoom: number): void {
         const lod = getLodLevel(zoom);
         
-        // Match JavaFX implementation exactly:
-        // - MEDIUM: shows low-LOD substitutes, hides switch matrix, shows low-LOD wires, hides individual wires
-        // - HIGH: shows switch matrix, hides low-LOD substitutes, hides low-LOD wires, shows individual wires  
-        // - LOW: does nothing (leaves everything as-is)
+        // Enhanced LOD system with switch matrix wire support:
+        // - LOW: Only show basic tile structure, hide all details
+        // - MEDIUM: Show low-LOD substitutes, hide switch matrix details, show simplified wires
+        // - HIGH: Show all details including switch matrix internal wires
+        
+        // Get precise zoom for smooth blending transitions
+        const zoomLevel = this.viewport.scale.x;
+        
+        console.log(`🔍 LOD Debug: zoom=${zoomLevel.toFixed(3)}, lod=${lod}, container children=${tileContainer.children.length}`);
         
         switch (lod) {
             case LodLevel.MEDIUM:
-                // JavaFX MEDIUM case logic
+                // Medium LOD - transition from low-LOD to high-detail with smooth blending
                 for (const child of tileContainer.children) {
                     if (!child.userData) continue;
                     
                     const childType = child.userData.type;
                     switch (childType) {
                         case 'lowLodSubstitute':
-                            child.visible = true;   // Show low-LOD substitute
+                            // TEMPORARY: Force hide low-LOD substitutes to see switch matrix wires clearly
+                            child.visible = false;
                             break;
                         case 'switchMatrix':
-                            child.visible = false;  // Hide detailed switch matrix
+                            child.visible = true;   // Show switch matrix container
+                            child.alpha = 1.0;     // Full opacity for switch matrix
+                            this.applySwitchMatrixLOD(child as Container, lod);
                             break;
                         case 'internalWire':
-                            child.visible = false;  // Hide individual wire lines (Line nodes in JavaFX)
+                            child.visible = false;  // Hide individual wire lines at medium LOD
                             break;
                         case 'lowLodWires':
-                            child.visible = true;   // Show low-LOD wire rectangles
+                            // TEMPORARY: Force hide low-LOD wire rectangles to see switch matrix wires clearly
+                            child.visible = false;
                             break;
                         // Leave other elements unchanged (tile, bel, port)
                     }
@@ -231,7 +248,7 @@ export class ViewportCullingLODManager {
                 break;
                 
             case LodLevel.HIGH:
-                // JavaFX HIGH case logic
+                // High LOD - show all details, hide substitutes
                 for (const child of tileContainer.children) {
                     if (!child.userData) continue;
                     
@@ -239,15 +256,18 @@ export class ViewportCullingLODManager {
                     switch (childType) {
                         case 'switchMatrix':
                             child.visible = true;   // Show detailed switch matrix
+                            child.alpha = 1.0;     // Full opacity at high LOD
+                            this.applySwitchMatrixLOD(child as Container, lod);
                             break;
                         case 'lowLodSubstitute':
-                            child.visible = false;  // Hide low-LOD substitute
+                            child.visible = false;  // Completely hide low-LOD substitute
                             break;
                         case 'internalWire':
                             child.visible = true;   // Show individual wire lines
+                            child.alpha = 1.0;
                             break;
                         case 'lowLodWires':
-                            child.visible = false;  // Hide low-LOD wire rectangles
+                            child.visible = false;  // Completely hide low-LOD wire rectangles
                             break;
                         // Leave other elements unchanged (tile, bel, port)
                     }
@@ -256,9 +276,64 @@ export class ViewportCullingLODManager {
                 
             case LodLevel.LOW:
             default:
-                // JavaFX LOW case (default) - do nothing, leave everything as-is
-                // This prevents the "white block" issue by not forcing visibility changes at very low zoom
+                // Low LOD - show low-LOD substitutes, minimal switch matrix detail
+                for (const child of tileContainer.children) {
+                    if (!child.userData) continue;
+                    
+                    const childType = child.userData.type;
+                    switch (childType) {
+                        case 'lowLodSubstitute':
+                            child.visible = true;
+                            child.alpha = 1.0;  // Full opacity at low LOD
+                            break;
+                        case 'switchMatrix':
+                            child.visible = true;   // Keep switch matrix visible but simplified
+                            child.alpha = 1.0;
+                            this.applySwitchMatrixLOD(child as Container, lod);
+                            break;
+                        case 'internalWire':
+                            child.visible = false;  // Hide individual wires
+                            break;
+                        case 'lowLodWires':
+                            child.visible = true;   // Show low-LOD wire rectangles
+                            child.alpha = 0.4;     // More transparent to reduce visual clutter
+                            break;
+                    }
+                }
                 break;
+        }
+    }
+
+    private applySwitchMatrixLOD(switchMatrixContainer: Container, lod: LodLevel): void {
+        // Apply LOD to switch matrix internal elements with smooth alpha blending
+        const zoomLevel = this.viewport.scale.x;
+        
+        for (const child of switchMatrixContainer.children) {
+            if (!child.userData) continue;
+            
+            const childType = child.userData.type;
+            if (childType === 'switchMatrixWire') {
+                switch (lod) {
+                    case LodLevel.HIGH:
+                        // High detail - full visibility and opacity
+                        child.visible = true;
+                        child.alpha = 1.0;
+                        break;
+                        
+                    case LodLevel.MEDIUM:
+                        // Medium detail - full visibility with good opacity
+                        child.visible = true;
+                        child.alpha = 1.0; // TEMPORARY: Full opacity for debugging
+                        break;
+                        
+                    case LodLevel.LOW:
+                    default:
+                        // TEMPORARY: Force visible for debugging
+                        child.visible = true;
+                        child.alpha = 1.0;
+                        break;
+                }
+            }
         }
     }
 
@@ -267,17 +342,26 @@ export class ViewportCullingLODManager {
     // =============================================================================
 
     private updateWireThickness(zoomLevel: number): void {
-        // Calculate wire thickness based on zoom level
-        // At low zoom, wires should be thicker to remain visible
-        const baseThickness = WIRE_CONSTANTS.DEFAULT_WIDTH;
-        const scaledThickness = Math.max(baseThickness, baseThickness / zoomLevel);
+        // Calculate wire thickness scaling for better visibility at different zoom levels
+        const tileWireThickness = Math.max(WIRE_CONSTANTS.DEFAULT_WIDTH, WIRE_CONSTANTS.DEFAULT_WIDTH / zoomLevel);
+        const switchMatrixWireThickness = Math.max(
+            SWITCH_MATRIX_WIRE_CONSTANTS.MIN_WIDTH, 
+            Math.min(
+                SWITCH_MATRIX_WIRE_CONSTANTS.MAX_WIDTH,
+                SWITCH_MATRIX_WIRE_CONSTANTS.DEFAULT_WIDTH * SWITCH_MATRIX_WIRE_CONSTANTS.LOD_THICKNESS_MULTIPLIER / zoomLevel
+            )
+        );
         
-        // Update wire thickness would happen here if we tracked individual wires
-        // For now, this is a placeholder for future wire thickness scaling
+        // Use callback to update wire thickness through TileRenderer
+        if (this.wireThicknessUpdateCallback) {
+            this.wireThicknessUpdateCallback(tileWireThickness, switchMatrixWireThickness);
+        }
+        
         if (DEBUG_CONSTANTS.LOG_LOD_CHANGES) {
-            console.log(`Wire thickness scaled to: ${scaledThickness.toFixed(2)} (zoom: ${zoomLevel.toFixed(2)})`);
+            console.log(`Wire thickness updated - Tile: ${tileWireThickness.toFixed(2)}, SM: ${switchMatrixWireThickness.toFixed(2)} (zoom: ${zoomLevel.toFixed(2)})`);
         }
     }
+
 
     public highlightWire(wire: Graphics, color: number): void {
         this.highlightedWires.add(wire);

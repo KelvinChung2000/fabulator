@@ -98,6 +98,18 @@ export const SWITCH_MATRIX_CONSTANTS = {
     LOW_LOD_STROKE_COLOR: 0xFFFFFF // Low LOD stroke color
 };
 
+/** Switch Matrix Wire rendering constants */
+export const SWITCH_MATRIX_WIRE_CONSTANTS = {
+    DEFAULT_COLOR: 0x4A9EFF,      // Slightly more muted blue for better blending
+    DEFAULT_WIDTH: 0.6,           // Slightly thinner for better visual balance
+    DEFAULT_ALPHA: 1.0,           // Full alpha - LOD system will control transparency
+    HIGHLIGHTED_COLOR: 0xFF6600,  // Orange for highlighted switch matrix wires
+    HIGHLIGHTED_WIDTH: 1.2,       // Thicker when highlighted
+    MIN_WIDTH: 0.4,               // Minimum wire width at low zoom
+    MAX_WIDTH: 1.5,               // Maximum wire width at high zoom
+    LOD_THICKNESS_MULTIPLIER: 2.0 // Wire thickness scaling factor for LOD
+};
+
 /** Low LOD wire substitute colors (matching JavaFX) */
 export const LOW_LOD_COLORS = {
     WIRES_FILL: 0x323232,         // rgb(50, 50, 50)

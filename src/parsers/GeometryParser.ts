@@ -15,6 +15,7 @@ import {
     SideUtils,
     IOUtils
 } from '../types/geometry';
+import { SwitchMatrixParser } from './SwitchMatrixParser';
 
 enum ParsingMode {
     NONE,
@@ -316,6 +317,8 @@ export class GeometryParser {
             case 'Csv':
                 if (this.currentSmGeom) {
                     this.currentSmGeom.csv = tokens[1];
+                    // Parse the CSV file to get actual switch matrix routing configuration
+                    this.parseSwitchMatrixCSV(this.currentSmGeom, tokens[1]);
                 }
                 break;
         }
@@ -668,6 +671,74 @@ export class GeometryParser {
             width: botRightX - topLeftX,
             height: botLeftY - topLeftY
         };
+    }
+
+    /**
+     * Parse switch matrix CSV file asynchronously to get routing configuration
+     */
+    private async parseSwitchMatrixCSV(smGeometry: SwitchMatrixGeometry, csvPath: string): Promise<void> {
+        try {
+            // Resolve CSV path relative to the main geometry file
+            const fullCsvPath = path.isAbsolute(csvPath) 
+                ? csvPath 
+                : path.resolve(path.dirname(this.filePath), csvPath);
+            
+            console.log(`Parsing switch matrix CSV: ${fullCsvPath} for ${smGeometry.name}`);
+            
+            const switchMatrixConfig = await SwitchMatrixParser.parseSwitchMatrixCSV(fullCsvPath);
+            
+            if (switchMatrixConfig) {
+                smGeometry.wireConnections = switchMatrixConfig.connections;
+                smGeometry.switchMatrixWires = this.resolveWireGeometryCoordinates(
+                    switchMatrixConfig.wireGeometries, 
+                    smGeometry
+                );
+                
+                console.log(`✅ Loaded ${switchMatrixConfig.connections.length} connections and ${switchMatrixConfig.wireGeometries.length} wire geometries for ${smGeometry.name}`);
+            } else {
+                console.warn(`⚠️  Failed to parse switch matrix CSV for ${smGeometry.name}, using fallback generation`);
+                // Keep the existing fallback behavior if CSV parsing fails
+            }
+        } catch (error) {
+            console.error(`Error parsing switch matrix CSV for ${smGeometry.name}:`, error);
+            // Keep the existing fallback behavior if CSV parsing fails
+        }
+    }
+
+    /**
+     * Resolve wire geometry coordinates using actual port positions
+     */
+    private resolveWireGeometryCoordinates(
+        wireGeometries: any[], 
+        smGeometry: SwitchMatrixGeometry
+    ): any[] {
+        const allPorts = [...smGeometry.portGeometryList, ...smGeometry.jumpPortGeometryList];
+        const portMap = new Map<string, PortGeometry>();
+        
+        for (const port of allPorts) {
+            portMap.set(port.name, port);
+        }
+        
+        return wireGeometries.map(wireGeom => {
+            const sourcePort = portMap.get(wireGeom.sourcePort);
+            const destPort = portMap.get(wireGeom.destPort);
+            
+            // If we have placeholder coordinates (0,0), replace with actual port positions
+            if (wireGeom.path && sourcePort && destPort) {
+                if (wireGeom.path.length === 2 && 
+                    wireGeom.path[0].x === 0 && wireGeom.path[0].y === 0 &&
+                    wireGeom.path[1].x === 0 && wireGeom.path[1].y === 0) {
+                    
+                    // Replace with actual port coordinates
+                    wireGeom.path = [
+                        { x: sourcePort.relX, y: sourcePort.relY },
+                        { x: destPort.relX, y: destPort.relY }
+                    ];
+                }
+            }
+            
+            return wireGeom;
+        });
     }
 
     public getGeometry(): FabricGeometry | null {
