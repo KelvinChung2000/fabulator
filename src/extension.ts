@@ -6,6 +6,9 @@ import { FabricExplorerProvider, FabricElementData } from './sidebar/FabricExplo
 import { SearchPanel } from './sidebar/SearchPanel';
 import { ProjectsProvider } from './sidebar/ProjectsProvider';
 import { SynthesisProvider, PlaceRouteProvider } from './sidebar/ImplementationProviders';
+import * as path from 'path';
+import * as fs from 'fs';
+import { spawn } from 'child_process';
 
 export function activate(context: vscode.ExtensionContext) {
 	console.log('FABulator extension is now active!');
@@ -119,8 +122,73 @@ export function activate(context: vscode.ExtensionContext) {
 		return currentFabricPanel;
 	};
 
-	// Register commands
-	const outputChannel = vscode.window.createOutputChannel('FABulous Implementation');
+	// Output channels
+	const synthChannel = vscode.window.createOutputChannel('FABulous Synthesis');
+	const prChannel = vscode.window.createOutputChannel('FABulous Place&Route');
+
+	function readProjectEnv(projectPath: string): Record<string,string> {
+		try {
+			const envPath = path.join(projectPath, '.FABulous', '.env');
+			if (fs.existsSync(envPath)) {
+				const content = fs.readFileSync(envPath, 'utf8');
+				const lines = content.split(/\r?\n/);
+				const map: Record<string,string> = {};
+				for (const l of lines) {
+					const m = l.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/);
+					if (m) { map[m[1]] = m[2].replace(/^"|"$/g,''); }
+				}
+				return map;
+			}
+		} catch {}
+		return {};
+	}
+
+	function resolveToolPath(kind: 'synthesis' | 'placeRoute' | 'fabulous', projectPath?: string): string {
+		const cfg = vscode.workspace.getConfiguration();
+		const priority = cfg.get<string>('fabulator.toolPath.priority', 'projectEnvFirst');
+		const extPath = kind === 'synthesis' ? cfg.get<string>('fabulator.toolPath.synthesis') : kind === 'placeRoute' ? cfg.get<string>('fabulator.toolPath.placeRoute') : cfg.get<string>('fabulator.toolPath.fabulous');
+		const projEnv = projectPath ? readProjectEnv(projectPath) : {};
+		const envValue = projEnv['FABULOUS_BIN'] || projEnv['FABULOUS_PATH'];
+		const system = 'FABulous';
+		const map: Record<string,(string|undefined)[]> = {
+			projectEnvFirst: [envValue, extPath, system],
+			extensionConfigFirst: [extPath, envValue, system],
+			systemEnvFirst: [system, envValue, extPath]
+		};
+		const order = map[priority] || map.projectEnvFirst;
+		for (const candidate of order) {
+			if (candidate && candidate.trim().length > 0) { return candidate; }
+		}
+		return system;
+	}
+
+	function spawnStreaming(kind: 'SYNTH' | 'P&R', toolPath: string, args: string[], cwd: string, extraEnv: Record<string,string>) {
+		const cfg = vscode.workspace.getConfiguration();
+		const showProgress = cfg.get<boolean>('fabulator.progress.notifications', true);
+		const channel = kind === 'SYNTH' ? synthChannel : prChannel;
+		const run = () => {
+			channel.show(true);
+			channel.appendLine(`[${kind}] CMD: ${toolPath} ${args.join(' ')}`);
+			const child = spawn(toolPath, args, { cwd, shell: false, env: { ...process.env, ...extraEnv } });
+			let closed = false;
+			child.stdout.on('data', d => channel.append(new TextDecoder().decode(d)));
+			child.stderr.on('data', d => channel.append(new TextDecoder().decode(d)));
+			child.on('close', code => { closed = true; channel.appendLine(`\n[${kind}] Process exited with code ${code}`); });
+			child.on('error', err => channel.appendLine(`\n[${kind}] Error: ${err.message}`));
+			return child;
+		};
+		if (!showProgress) { run(); return; }
+		vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `${kind === 'SYNTH' ? 'Synthesis' : 'Place & Route'} running...`, cancellable: true }, (progress, token) => {
+			return new Promise<void>(resolve => {
+				const child = run();
+				token.onCancellationRequested(() => {
+					try { child.kill(); channel.appendLine(`\n[${kind}] Cancel requested by user.`); } catch {}
+					resolve();
+				});
+				child.on('close', () => resolve());
+			});
+		});
+	}
 	const openFabricCommand = vscode.commands.registerCommand('fabulator.openFabric', async () => {
         const lastDir = context.globalState.get<string>('fabulator.lastFabricDir');
 		const options: vscode.OpenDialogOptions = {
@@ -445,19 +513,22 @@ export function activate(context: vscode.ExtensionContext) {
 	const startSynth = vscode.commands.registerCommand('fabulator.synth.start', async () => {
 		const files = synthesisProvider.getFiles();
 		if (files.length === 0) { vscode.window.showWarningMessage('No synthesis sources added.'); return; }
-		outputChannel.show(true);
-		outputChannel.appendLine(`[SYNTH] Starting synthesis for ${files.length} file(s).`);
-		// Choose project context (reuse showFabric project selection logic)
+		synthChannel.show(true);
+		synthChannel.appendLine(`[SYNTH] Starting synthesis for ${files.length} file(s).`);
 		const projects = projectsProvider.getProjects();
-		if (projects.length === 0) { outputChannel.appendLine('No project paths defined. Aborting synthesis.'); return; }
-		let project = projects.length === 1 ? projects[0] : (await vscode.window.showQuickPick(projects.map(p => ({ label: require('path').basename(p), description: p, value: p })), { placeHolder: 'Select project for synthesis' }))?.value;
+		if (projects.length === 0) { synthChannel.appendLine('No project paths defined. Aborting synthesis.'); return; }
+		let project = context.globalState.get<string>('fabulator.lastImplProject');
+		if (!project || !projects.includes(project)) {
+			project = projects.length === 1 ? projects[0] : (await vscode.window.showQuickPick(projects.map(p => ({ label: path.basename(p), description: p, value: p })), { placeHolder: 'Select project for synthesis' }))?.value;
+		}
 		if (!project) { return; }
-		// Spawn FABulous -p with files
-		const args = ['-p', ...files];
-		outputChannel.appendLine(`[SYNTH] Executing: FABulous ${args.join(' ')}`);
-		const terminal = vscode.window.createTerminal({ name: 'FABulous Synthesis', cwd: project });
-		terminal.show();
-		terminal.sendText(`FABulous ${args.map(a => a.includes(' ') ? `"${a}"` : a).join(' ')}`);
+		context.globalState.update('fabulator.lastImplProject', project);
+		const toolPath = resolveToolPath('synthesis', project);
+		const cfg = vscode.workspace.getConfiguration();
+		const extraArgs = cfg.get<string[]>('fabulator.synthesis.args', []);
+		const envObj = cfg.get<Record<string,string>>('fabulator.synthesis.env', {});
+		const args = [...extraArgs, '-p', ...files];
+		spawnStreaming('SYNTH', toolPath, args, project, envObj || {});
 	});
 
 	const addPRFile = vscode.commands.registerCommand('fabulator.pr.addFile', async () => {
@@ -471,20 +542,25 @@ export function activate(context: vscode.ExtensionContext) {
 	const startPR = vscode.commands.registerCommand('fabulator.pr.start', async () => {
 		const files = placeRouteProvider.getFiles();
 		if (files.length === 0) { vscode.window.showWarningMessage('No P&R sources added.'); return; }
-		outputChannel.show(true);
-		outputChannel.appendLine(`[P&R] Starting place & route for ${files.length} file(s).`);
+		prChannel.show(true);
+		prChannel.appendLine(`[P&R] Starting place & route for ${files.length} file(s).`);
 		const projects = projectsProvider.getProjects();
-		if (projects.length === 0) { outputChannel.appendLine('No project paths defined. Aborting place & route.'); return; }
-		let project = projects.length === 1 ? projects[0] : (await vscode.window.showQuickPick(projects.map(p => ({ label: require('path').basename(p), description: p, value: p })), { placeHolder: 'Select project for place & route' }))?.value;
+		if (projects.length === 0) { prChannel.appendLine('No project paths defined. Aborting place & route.'); return; }
+		let project = context.globalState.get<string>('fabulator.lastImplProject');
+		if (!project || !projects.includes(project)) {
+			project = projects.length === 1 ? projects[0] : (await vscode.window.showQuickPick(projects.map(p => ({ label: path.basename(p), description: p, value: p })), { placeHolder: 'Select project for place & route' }))?.value;
+		}
 		if (!project) { return; }
-		const args = ['-p', ...files];
-		outputChannel.appendLine(`[P&R] Executing: FABulous ${args.join(' ')}`);
-		const terminal = vscode.window.createTerminal({ name: 'FABulous P&R', cwd: project });
-		terminal.show();
-		terminal.sendText(`FABulous ${args.map(a => a.includes(' ') ? `"${a}"` : a).join(' ')}`);
+		context.globalState.update('fabulator.lastImplProject', project);
+		const toolPath = resolveToolPath('placeRoute', project);
+		const cfg = vscode.workspace.getConfiguration();
+		const extraArgs = cfg.get<string[]>('fabulator.placeRoute.args', []);
+		const envObj = cfg.get<Record<string,string>>('fabulator.placeRoute.env', {});
+		const args = [...extraArgs, '-p', ...files];
+		spawnStreaming('P&R', toolPath, args, project, envObj || {});
 	});
 
-	context.subscriptions.push(addSynthFile, removeSynthFile, startSynth, addPRFile, removePRFile, startPR, outputChannel);
+	context.subscriptions.push(addSynthFile, removeSynthFile, startSynth, addPRFile, removePRFile, startPR, synthChannel, prChannel);
 }
 
 // This method is called when your extension is deactivated

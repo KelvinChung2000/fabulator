@@ -12,6 +12,67 @@
   "activationEvents": [],
   "main": "./out/extension.js",
   "contributes": {
+    "configuration": {
+      "title": "FABulator Implementation",
+      "properties": {
+        "fabulator.toolPath.fabulous": {
+          "type": "string",
+          "default": "FABulous",
+          "description": "Path or command for FABulous executable (fallback if not in project .env)."
+        },
+        "fabulator.toolPath.synthesis": {
+          "type": "string",
+          "default": "FABulous",
+          "description": "Override synthesis tool path (defaults to main FABulous path)."
+        },
+        "fabulator.toolPath.placeRoute": {
+          "type": "string",
+          "default": "FABulous",
+          "description": "Override place & route tool path (defaults to main FABulous path)."
+        },
+        "fabulator.toolPath.priority": {
+          "type": "string",
+          "enum": [
+            "projectEnvFirst",
+            "extensionConfigFirst",
+            "systemEnvFirst"
+          ],
+          "default": "projectEnvFirst",
+          "description": "Order of precedence for resolving tool path: project .env, extension config, or system PATH."
+        },
+        "fabulator.synthesis.args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Additional arguments to append for synthesis runs before file list."
+        },
+        "fabulator.placeRoute.args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Additional arguments to append for place & route runs before file list."
+        },
+        "fabulator.synthesis.env": {
+          "type": "object",
+          "default": {},
+          "description": "Key/value environment variables to merge into synthesis process environment."
+        },
+        "fabulator.placeRoute.env": {
+          "type": "object",
+          "default": {},
+          "description": "Key/value environment variables to merge into place & route process environment."
+        },
+        "fabulator.progress.notifications": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show VS Code progress notifications for synthesis and place & route executions."
+        }
+      }
+    },
     "commands": [
       {
         "command": "fabulator.openFabric",
