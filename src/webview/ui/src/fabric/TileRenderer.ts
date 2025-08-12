@@ -15,6 +15,8 @@ import {
     TILE_CONSTANTS,
     SWITCH_MATRIX_CONSTANTS,
     SWITCH_MATRIX_WIRE_CONSTANTS,
+    RENDER_MODES,
+    SM_DIRECT_WIRE_STYLE,
     BEL_CONSTANTS,
     PORT_CONSTANTS,
     WIRE_CONSTANTS,
@@ -63,16 +65,21 @@ export class TileRenderer {
         let tilesWithSwitchMatrix = 0;
         
         // Create all tiles
+        const tileGeomMapAny: any = geometry.tileGeomMap as any; // allow object or Map-like
         for (let y = 0; y < geometry.numberOfRows; y++) {
             for (let x = 0; x < geometry.numberOfColumns; x++) {
                 const tileName = geometry.tileNames[y][x];
-                const tileGeometry = geometry.tileGeomMap[tileName];
+                const mapObj: any = tileGeomMapAny as any;
+                const key = String(tileName);
+                const tileGeometry = tileGeomMapAny instanceof Map ? tileGeomMapAny.get(key) : mapObj[key];
                 const location = geometry.tileLocations[y][x];
-                
+
+                if (!tileGeometry) {
+                    console.warn(`⚠️ Missing tile geometry for name '${tileName}' at (${x},${y}). Available keys:`, tileGeomMapAny instanceof Map ? Array.from(tileGeomMapAny.keys()).slice(0,10) : Object.keys(tileGeomMapAny).slice(0,10));
+                }
+
                 if (tileGeometry && location) {
-                    if (tileGeometry.smGeometry) {
-                        tilesWithSwitchMatrix++;
-                    }
+                    if (tileGeometry.smGeometry) { tilesWithSwitchMatrix++; }
                     this.createTile(tileGeometry, location, x, y);
                 }
             }
@@ -144,9 +151,9 @@ export class TileRenderer {
             this.createBel(belGeometry, tileContainer);
         }
 
-        // Create internal wires (BEL-to-port connections)
-        for (const wireGeometry of tileGeometry.wireGeometryList) {
-            this.createInternalWire(wireGeometry, tileContainer);
+        // Create internal wires (BEL-to-port connections) using batching for performance
+        if (tileGeometry.wireGeometryList && tileGeometry.wireGeometryList.length) {
+            this.createInternalWireBatch(tileGeometry.wireGeometryList, tileContainer);
         }
 
         // Create low-LOD wire substitutes
@@ -187,7 +194,8 @@ export class TileRenderer {
     private createSwitchMatrix(smGeometry: any, tileContainer: Container): void {
         console.log(`🎛️ CREATE SWITCH MATRIX: ${smGeometry.name} - Starting creation...`);
         
-        const smContainer = new Container();
+    const smContainer = new Container();
+    smContainer.sortableChildren = true;
         smContainer.x = smGeometry.relX;
         smContainer.y = smGeometry.relY;
 
@@ -208,9 +216,13 @@ export class TileRenderer {
         smRect.cursor = 'pointer';
         smRect.on('click', () => this.onSwitchMatrixClick(smGeometry));
 
-        smContainer.addChild(smRect);
+    smRect.zIndex = 0;
+    smContainer.addChild(smRect);
 
-        // Create ports
+    // Auto-layout ports if they collapse (same coordinate) or no layout given
+    this.autoLayoutSwitchMatrixPorts(smGeometry);
+
+    // Create ports (above wires)
         if (smGeometry.portGeometryList) {
             for (const port of smGeometry.portGeometryList) {
                 this.createSwitchMatrixPort(port, smContainer, smGeometry, 'regular');
@@ -226,12 +238,40 @@ export class TileRenderer {
         console.log(`🔌 About to create switch matrix wires for ${smGeometry.name}...`);
         
         // Create switch matrix internal wires
-        this.createSwitchMatrixWires(smGeometry, smContainer);
+    this.createSwitchMatrixWires(smGeometry, smContainer);
 
         // Mark for LOD system and store geometry for wire creation
         (smContainer as any).userData = { type: 'switchMatrix', smGeometry };
 
         tileContainer.addChild(smContainer);
+    }
+
+    private autoLayoutSwitchMatrixPorts(smGeometry: SwitchMatrixGeometry): void {
+        const ports = smGeometry.portGeometryList;
+        if (!ports || ports.length === 0) { return; }
+        const uniquePos = new Set(ports.map(p => `${p.relX},${p.relY}`));
+        const needLayout = uniquePos.size < Math.max(3, Math.floor(ports.length * 0.3));
+        if (!needLayout) { return; }
+        const width = smGeometry.width || 120;
+        const height = smGeometry.height || 120;
+        const margin = 4;
+        const leftSources = ports.filter(p => /beg/i.test(p.name));
+        const rightDests = ports.filter(p => /(end|mid)/i.test(p.name));
+        const others = ports.filter(p => !leftSources.includes(p) && !rightDests.includes(p));
+        const placeVertical = (list: PortGeometry[], x: number) => {
+            const step = (height - 2 * margin) / (list.length + 1);
+            list.sort((a,b) => a.name.localeCompare(b.name));
+            list.forEach((p,i) => { p.relX = x; p.relY = margin + step * (i+1); });
+        };
+        placeVertical(leftSources, margin);
+        placeVertical(rightDests, width - margin);
+        // Distribute others along bottom if any
+        if (others.length) {
+            const stepX = (width - 2 * margin) / (others.length + 1);
+            others.sort((a,b) => a.name.localeCompare(b.name));
+            others.forEach((p,i) => { p.relX = margin + stepX * (i+1); p.relY = height - margin; });
+        }
+        console.log(`🔧 Auto-laid out SM ports for ${smGeometry.name}: left=${leftSources.length} right=${rightDests.length} bottom=${others.length}`);
     }
 
     private createSwitchMatrixPort(port: any, smContainer: Container, smGeometry: any, portType: 'regular' | 'jump'): void {
@@ -259,7 +299,8 @@ export class TileRenderer {
             parent: smGeometry 
         };
 
-        smContainer.addChild(portGraphics);
+    (portGraphics as any).zIndex = 3;
+    smContainer.addChild(portGraphics);
     }
 
     private createSwitchMatrixWires(smGeometry: SwitchMatrixGeometry, smContainer: Container): void {
@@ -286,10 +327,57 @@ export class TileRenderer {
             console.log(`    - Using ${smGeometry.switchMatrixWires.length} parsed switch matrix wires`);
         }
 
-        // Create visual representation of switch matrix wires
-        console.log(`    - Creating ${smGeometry.switchMatrixWires.length} visual wire representations...`);
-        for (const wire of smGeometry.switchMatrixWires) {
-            this.createSwitchMatrixWire(wire, smContainer, smGeometry);
+        const WIRES = smGeometry.switchMatrixWires;
+        console.log(`    - Creating ${WIRES.length} visual wire representations...`);
+
+        // Simplified mode: straight gray connections for clarity
+        if (RENDER_MODES.SIMPLIFIED_SM_DIRECT) {
+            const straight = new Graphics();
+            // Collect port positions by name for fast lookup
+            const findPort = (name: string): PortGeometry | null => this.findPortInSwitchMatrix(name, smGeometry);
+            let count = 0;
+            for (const w of WIRES) {
+                const s = findPort(w.sourcePort); const d = findPort(w.destPort);
+                if (!s || !d) {
+                    console.warn(`SM direct: missing port(s) for ${w.sourcePort} -> ${w.destPort}`, { s, d, sm: smGeometry.name });
+                    continue;
+                }
+                // Direct straight line
+                straight.moveTo(s.relX, s.relY);
+                straight.lineTo(d.relX, d.relY);
+                count++;
+            }
+            straight.stroke({ width: SM_DIRECT_WIRE_STYLE.WIDTH, color: SM_DIRECT_WIRE_STYLE.COLOR, alpha: SM_DIRECT_WIRE_STYLE.ALPHA });
+            (straight as any).userData = { type: 'switchMatrixWire' };
+            (straight as any).zIndex = 2;
+            (straight as any).currentThickness = SM_DIRECT_WIRE_STYLE.WIDTH;
+            smContainer.addChild(straight);
+            console.log(`      ✅ Drawn ${count} simplified direct SM wires`);
+        } else if (WIRES.length > 300) {
+            const batch = new Graphics();
+            let count = 0;
+            for (const wire of WIRES) {
+                const src = this.findPortInSwitchMatrix(wire.sourcePort, smGeometry);
+                const dst = this.findPortInSwitchMatrix(wire.destPort, smGeometry);
+                if (!src || !dst) {
+                    console.warn(`SM batch: missing port(s) for ${wire.sourcePort} -> ${wire.destPort}`, { src, dst, sm: smGeometry.name });
+                    continue; }
+                const path = this.calculateSwitchMatrixRoutingPath(src, dst, smGeometry);
+                if (path.length < 2) { continue; }
+                batch.moveTo(path[0].x, path[0].y);
+                for (let i = 1; i < path.length; i++) { batch.lineTo(path[i].x, path[i].y); }
+                count++;
+            }
+            batch.stroke({ width: SWITCH_MATRIX_WIRE_CONSTANTS.DEFAULT_WIDTH, color: SWITCH_MATRIX_WIRE_CONSTANTS.DEFAULT_COLOR, alpha: SWITCH_MATRIX_WIRE_CONSTANTS.DEFAULT_ALPHA });
+            (batch as any).userData = { type: 'switchMatrixWire' };
+            (batch as any).zIndex = 2;
+            (batch as any).currentThickness = SWITCH_MATRIX_WIRE_CONSTANTS.DEFAULT_WIDTH;
+            smContainer.addChild(batch);
+            console.log(`      ✅ Batched ${count} SM wires`);
+    } else {
+            for (const wire of WIRES) {
+                this.createSwitchMatrixWire(wire, smContainer, smGeometry);
+            }
         }
         console.log(`    ✅ Completed wire creation for ${smGeometry.name}`);
     }
@@ -433,32 +521,53 @@ export class TileRenderer {
             wireType: 'switchMatrix'
         };
 
-        smContainer.addChild(wireGraphics);
+    (wireGraphics as any).zIndex = 2;
+    smContainer.addChild(wireGraphics);
         console.log(`      ✅ Wire added to switch matrix container. Container now has ${smContainer.children.length} children`);
     }
 
     private findPortInSwitchMatrix(portName: string, smGeometry: SwitchMatrixGeometry): PortGeometry | null {
-        // Search in regular ports
-        for (const port of smGeometry.portGeometryList) {
-            if (port.name === portName) {
-                return port;
+        const normalize = (s?: string) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const target = normalize(portName);
+
+        const candidates: PortGeometry[] = [
+            ...smGeometry.portGeometryList,
+            ...smGeometry.jumpPortGeometryList
+        ];
+
+        // 1) Exact match on name
+        for (const p of candidates) { if (p.name === portName) { return p; } }
+
+        // 2) Match on sourceName/destName
+        for (const p of candidates) { if (p.sourceName === portName || p.destName === portName) { return p; } }
+
+        // 3) Normalized match (strip punctuation/case)
+        for (const p of candidates) {
+            if (normalize(p.name) === target || normalize(p.sourceName) === target || normalize(p.destName) === target) {
+                return p;
             }
         }
-        
-        // Search in jump ports
-        for (const jumpPort of smGeometry.jumpPortGeometryList) {
-            if (jumpPort.name === portName) {
-                return jumpPort;
-            }
+
+        // 4) Suffix match (handle tile prefixes)
+        for (const p of candidates) {
+            const pn = normalize(p.name);
+            if (target.endsWith(pn) || pn.endsWith(target)) { return p; }
         }
-        
+
+        // Not found
         return null;
     }
 
     private calculateSwitchMatrixRoutingPath(sourcePort: PortGeometry, destPort: PortGeometry, smGeometry: SwitchMatrixGeometry): Location[] {
-        // Implement Java-like smart routing logic
-        const sourceLocation = { x: sourcePort.relX, y: sourcePort.relY };
-        const destLocation = { x: destPort.relX, y: destPort.relY };
+        // Implement Java-like smart routing logic with bias towards Manhattan paths for clarity
+        const BORDER_INSET = 2; // px inset to keep wires off the SM border stroke
+        const clampIn = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
+        const insetPoint = (pt: {x:number,y:number}) => ({
+            x: clampIn(pt.x, BORDER_INSET, Math.max(BORDER_INSET, smGeometry.width - BORDER_INSET)),
+            y: clampIn(pt.y, BORDER_INSET, Math.max(BORDER_INSET, smGeometry.height - BORDER_INSET))
+        });
+        const sourceLocation = insetPoint({ x: sourcePort.relX, y: sourcePort.relY });
+        const destLocation = insetPoint({ x: destPort.relX, y: destPort.relY });
         
         console.log(`        🧮 Calculating routing from (${sourceLocation.x},${sourceLocation.y}) to (${destLocation.x},${destLocation.y})`);
         console.log(`        🔲 Switch matrix size: ${smGeometry.width}x${smGeometry.height}`);
@@ -479,30 +588,43 @@ export class TileRenderer {
         const drawCurve = !xEqual && !yEqual && (atLeftOrRightBorder || atTopOrBottomBorder);
         console.log(`        🎯 Decision: drawCurve=${drawCurve}`);
         
-        if (drawCurve) {
-            // Calculate curved path with midpoint (matching Java buildConnection logic)
-            const midX = (sourceLocation.x + destLocation.x) / 2;
-            const midY = (sourceLocation.y + destLocation.y) / 2;
-            
-            const diffX = destLocation.x - sourceLocation.x;
-            const diffY = destLocation.y - sourceLocation.y;
-            
-            // Apply offset for visual separation (based on Java algorithm)
-            const offsetX = diffX > 0 ? 1 : -1;
-            const offsetY = diffY > 0 ? 1 : -1;
-            
-            const midPoint = {
-                x: midX + 0.5 * diffY * offsetX,
-                y: midY + 0.5 * diffX * offsetY
+    // Prefer Manhattan path unless strictly aligned to minimize diagonal clutter
+        const preferManhattan = !(sourceLocation.x === destLocation.x || sourceLocation.y === destLocation.y);
+        if (preferManhattan) {
+            // Choose L-shaped route using smaller delta first
+            const dx = Math.abs(destLocation.x - sourceLocation.x);
+            const dy = Math.abs(destLocation.y - sourceLocation.y);
+            const lanes = 7; // odd number to keep a centered lane
+            const laneSpacing = 2; // px
+            const hash = (s: string) => {
+                let h = 0; for (let i = 0; i < s.length; i++) { h = ((h << 5) - h) + s.charCodeAt(i); h |= 0; }
+                return Math.abs(h);
             };
-            
-            console.log(`        🔄 Curved path with midpoint at (${midPoint.x},${midPoint.y})`);
-            return [sourceLocation, midPoint, destLocation];
-        } else {
-            // Simple direct connection
-            console.log(`        ➡️  Direct path`);
-            return [sourceLocation, destLocation];
+            const laneIndex = (hash(sourcePort.name + '->' + destPort.name) % lanes) - Math.floor(lanes/2);
+            const offset = laneIndex * laneSpacing;
+
+            if (dx <= dy) {
+                // Vertical then horizontal: elbow at (sx, dy)
+                const elbow = { x: sourceLocation.x, y: destLocation.y };
+                // Offset elbow horizontally to separate parallel bundles
+                const elbowOffset = {
+                    x: Math.max(1, Math.min(smGeometry.width - 1, elbow.x + offset)),
+                    y: elbow.y
+                };
+                return [sourceLocation, elbowOffset, destLocation];
+            } else {
+                // Horizontal then vertical: elbow at (dx, sy)
+                const elbow = { x: destLocation.x, y: sourceLocation.y };
+                // Offset elbow vertically to separate parallel bundles
+                const elbowOffset = {
+                    x: elbow.x,
+                    y: Math.max(1, Math.min(smGeometry.height - 1, elbow.y + offset))
+                };
+                return [sourceLocation, elbowOffset, destLocation];
+            }
         }
+        // Simple direct connection when aligned
+        return [sourceLocation, destLocation];
     }
 
     private drawSwitchMatrixWireRoutingPath(wireGraphics: Graphics, path: Location[], thickness: number): void {
@@ -615,31 +737,79 @@ export class TileRenderer {
     // WIRE CREATION
     // =============================================================================
 
-    private createInternalWire(wireGeometry: WireGeometry, tileContainer: Container): void {
-        if (!wireGeometry.path || wireGeometry.path.length < 2) return;
+    private createInternalWireBatch(wireGeometries: WireGeometry[], tileContainer: Container): void {
+        const batchGraphics = new Graphics();
+        const segments: { name: string; geometry: WireGeometry; }[] = [];
+        const thickness = WIRE_CONSTANTS.DEFAULT_WIDTH;
 
-        const wireGraphics = new Graphics();
-        
-        // Store wire geometry for dynamic redrawing
-        (wireGraphics as any).wireGeometry = wireGeometry;
-        (wireGraphics as any).currentThickness = WIRE_CONSTANTS.DEFAULT_WIDTH;
-        
-        // Draw initial wire with default thickness
-        this.drawWirePath(wireGraphics, wireGeometry, WIRE_CONSTANTS.DEFAULT_WIDTH);
+        // Determine optional clipping region: use union of BEL geometries if present
+        const belBounds = { x: Infinity, y: Infinity, right: -Infinity, bottom: -Infinity };
+        for (const child of tileContainer.children) {
+            const anyChild: any = child as any;
+            if (anyChild.userData?.type === 'bel') {
+                const g = child as Container;
+                const localBounds = g.getBounds();
+                belBounds.x = Math.min(belBounds.x, localBounds.x);
+                belBounds.y = Math.min(belBounds.y, localBounds.y);
+                belBounds.right = Math.max(belBounds.right, localBounds.x + localBounds.width);
+                belBounds.bottom = Math.max(belBounds.bottom, localBounds.y + localBounds.height);
+            }
+        }
+        const hasBelBounds = belBounds.right > belBounds.x && belBounds.bottom > belBounds.y;
 
-        // Make interactive
-        wireGraphics.eventMode = 'static';
-        wireGraphics.cursor = 'pointer';
-        wireGraphics.on('click', () => this.onInternalWireClick(wireGeometry));
-
-        // Mark for LOD system
-        (wireGraphics as any).userData = { 
-            type: 'internalWire', 
-            wireName: wireGeometry.name,
-            wireType: 'internal'
+        // Optional routing helper to avoid single straight diagonal lines (convert to Manhattan)
+        const manhattanize = (path: {x:number,y:number}[]): {x:number,y:number}[] => {
+            if (path.length !== 2) { return path; } // only adjust trivial two-point wires
+            const [a,b] = path;
+            if (a.x === b.x || a.y === b.y) { return path; } // already orthogonal
+            // Insert an L-turn choosing axis with smaller delta first
+            const dx = Math.abs(b.x - a.x);
+            const dy = Math.abs(b.y - a.y);
+            if (dx < dy) {
+                return [a, { x: a.x, y: b.y }, b];
+            } else {
+                return [a, { x: b.x, y: a.y }, b];
+            }
         };
 
-        tileContainer.addChild(wireGraphics);
+        for (const wg of wireGeometries) {
+            if (!wg.path || wg.path.length < 2) { continue; }
+            const path = manhattanize(wg.path);
+            batchGraphics.moveTo(path[0].x, path[0].y);
+            for (let i = 1; i < path.length; i++) {
+                batchGraphics.lineTo(path[i].x, path[i].y);
+            }
+            segments.push({ name: wg.name, geometry: wg });
+        }
+
+        batchGraphics.stroke({
+            width: thickness,
+            color: WIRE_CONSTANTS.DEFAULT_COLOR,
+            alpha: WIRE_CONSTANTS.DEFAULT_ALPHA
+        });
+
+        // Store metadata for thickness update & potential hit detection upgrades
+        (batchGraphics as any).wireBatch = segments;
+        (batchGraphics as any).currentThickness = thickness;
+        (batchGraphics as any).userData = { type: 'internalWireBatch', wireType: 'internalBatch' };
+
+        batchGraphics.eventMode = 'static';
+        batchGraphics.cursor = 'pointer';
+        batchGraphics.on('click', () => {
+            // For now just emit first wire info if exists
+            if (segments.length) { this.onInternalWireClick(segments[0].geometry); }
+        });
+
+        tileContainer.addChild(batchGraphics);
+
+        if (hasBelBounds) {
+            // Apply a mask so internal wires do not extend outside BEL(s)
+            const mask = new Graphics();
+            mask.rect(belBounds.x, belBounds.y, belBounds.right - belBounds.x, belBounds.bottom - belBounds.y);
+            mask.fill({ color: 0xffffff, alpha: 1 });
+            tileContainer.addChild(mask);
+            batchGraphics.mask = mask;
+        }
     }
 
     private drawWirePath(wireGraphics: Graphics, wireGeometry: WireGeometry, thickness: number): void {
@@ -728,7 +898,7 @@ export class TileRenderer {
     // =============================================================================
 
     private buildMarkers(): void {
-        if (!this.currentGeometry) return;
+    if (!this.currentGeometry) { return; }
 
         const markerContainer = new Container();
         
@@ -838,17 +1008,45 @@ export class TileRenderer {
 
     private updateTileWireThickness(tileContainer: Container, tileWireThickness: number, switchMatrixWireThickness: number): void {
         for (const child of tileContainer.children) {
-            if (!child.userData) continue;
+            const anyChild: any = child as any;
+            if (!anyChild.userData) { continue; }
             
-            const childType = child.userData.type;
+            const childType = anyChild.userData.type;
             if (childType === 'internalWire' && child instanceof Graphics) {
-                // Update tile-level internal wire thickness
+                // Legacy single wire (should be rare after batching)
                 this.updateInternalWireThickness(child, tileWireThickness);
+            } else if (childType === 'internalWireBatch' && child instanceof Graphics) {
+                this.updateInternalWireBatchThickness(child, tileWireThickness);
             } else if (childType === 'switchMatrix' && child instanceof Container) {
                 // Update switch matrix wire thickness
                 this.updateSwitchMatrixWireThickness(child, switchMatrixWireThickness);
             }
         }
+    }
+
+    private updateInternalWireBatchThickness(batchGraphics: Graphics, thickness: number): void {
+        const currentThickness = (batchGraphics as any).currentThickness;
+    if (Math.abs(currentThickness - thickness) <= 0.05) { return; }
+
+        const batch = (batchGraphics as any).wireBatch as { geometry: WireGeometry }[];
+    if (!batch || !batch.length) { return; }
+
+        // Redraw all segments with new thickness
+        batchGraphics.clear();
+        for (const seg of batch) {
+            const path = seg.geometry.path;
+            if (!path || path.length < 2) { continue; }
+            batchGraphics.moveTo(path[0].x, path[0].y);
+            for (let i = 1; i < path.length; i++) {
+                batchGraphics.lineTo(path[i].x, path[i].y);
+            }
+        }
+        batchGraphics.stroke({
+            width: thickness,
+            color: WIRE_CONSTANTS.DEFAULT_COLOR,
+            alpha: WIRE_CONSTANTS.DEFAULT_ALPHA
+        });
+        (batchGraphics as any).currentThickness = thickness;
     }
 
     private updateInternalWireThickness(wireGraphics: Graphics, thickness: number): void {
@@ -864,12 +1062,20 @@ export class TileRenderer {
 
     private updateSwitchMatrixWireThickness(switchMatrixContainer: Container, thickness: number): void {
         for (const child of switchMatrixContainer.children) {
-            if (child.userData?.type === 'switchMatrixWire' && child instanceof Graphics) {
+            const c: any = child as any;
+            if (c.userData?.type === 'switchMatrixWire' && child instanceof Graphics) {
                 const currentThickness = (child as any).currentThickness;
                 if (Math.abs(currentThickness - thickness) > 0.05) { // Only redraw if thickness changed significantly
                     const routingPath = (child as any).routingPath;
                     if (routingPath) {
+                        // Per-wire instance
                         this.drawSwitchMatrixWireRoutingPath(child, routingPath, thickness);
+                        (child as any).currentThickness = thickness;
+                    } else {
+                        // Batched instance: re-stroke with new thickness (path is already in graphics buffers)
+                        // Clear only stroke style by redrawing stroke over existing path definitions
+                        // Note: Pixi Graphics does not preserve vector path after clear, so we only restroke if not cleared
+                        // For now, do nothing (will pick up new thickness on rebuild). Optionally could rebuild batch here.
                         (child as any).currentThickness = thickness;
                     }
                 }
@@ -917,10 +1123,11 @@ export class TileRenderer {
 
     public highlightBelInTile(tileX: number, tileY: number, belName: string): void {
         const tileContainer = this.getTileContainer(tileX, tileY);
-        if (!tileContainer) return;
+        if (!tileContainer) { return; }
 
         for (const child of tileContainer.children) {
-            if (child.userData?.type === 'bel' && child.userData?.name === belName) {
+            const anyChild: any = child as any;
+            if (anyChild.userData?.type === 'bel' && anyChild.userData?.name === belName) {
                 this.highlightContainer(child as Container);
                 break;
             }
@@ -929,10 +1136,11 @@ export class TileRenderer {
 
     public highlightSwitchMatrixInTile(tileX: number, tileY: number): void {
         const tileContainer = this.getTileContainer(tileX, tileY);
-        if (!tileContainer) return;
+        if (!tileContainer) { return; }
 
         for (const child of tileContainer.children) {
-            if (child.userData?.type === 'switchMatrix') {
+            const anyChild: any = child as any;
+            if (anyChild.userData?.type === 'switchMatrix') {
                 this.highlightContainer(child as Container);
                 break;
             }
@@ -941,7 +1149,7 @@ export class TileRenderer {
 
     public highlightPortInTile(tileX: number, tileY: number, portName: string, parentName?: string): void {
         const tileContainer = this.getTileContainer(tileX, tileY);
-        if (!tileContainer) return;
+        if (!tileContainer) { return; }
 
         // Find the port in BELs or switch matrix
         this.findAndHighlightPort(tileContainer, portName, parentName);
@@ -949,10 +1157,11 @@ export class TileRenderer {
 
     public highlightWireInTile(tileX: number, tileY: number, wireName: string): void {
         const tileContainer = this.getTileContainer(tileX, tileY);
-        if (!tileContainer) return;
+        if (!tileContainer) { return; }
 
         for (const child of tileContainer.children) {
-            if (child.userData?.type === 'internalWire' && child.userData?.name === wireName) {
+            const anyChild: any = child as any;
+            if (anyChild.userData?.type === 'internalWire' && anyChild.userData?.name === wireName) {
                 this.highlightGraphics(child as Graphics);
                 break;
             }
@@ -1002,9 +1211,11 @@ export class TileRenderer {
     private findAndHighlightPort(container: Container, portName: string, parentName?: string): void {
         // Recursively search for the port
         for (const child of container.children) {
-            if (child.userData?.type === 'port' && child.userData?.name === portName) {
+            const anyChild: any = child as any;
+            if (anyChild.userData?.type === 'port' && anyChild.userData?.name === portName) {
                 // Check if parent matches if specified
-                if (!parentName || child.parent?.userData?.name === parentName) {
+                const parentUserData: any = (child.parent as any)?.userData;
+                if (!parentName || parentUserData?.name === parentName) {
                     this.highlightGraphics(child as Graphics);
                     return;
                 }

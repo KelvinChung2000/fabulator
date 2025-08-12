@@ -32,6 +32,7 @@ export class FabricRenderer {
     // Main containers
     private fabricContainer: Container;
     private designContainer: Container;
+    private crossTileLayer: Container | null = null;
     
     // Modular managers
     private viewportManager: ViewportManager;
@@ -123,6 +124,9 @@ export class FabricRenderer {
         
         // Build fabric using TileRenderer
         this.tileContainers = this.tileRenderer.buildFabric(geometry);
+
+    // Build cross-tile wire overlay
+    this.buildCrossTileOverlay(geometry);
         
         // Initialize culling and LOD system
         this.cullingLODManager.initializeForGeometry(geometry, this.tileContainers);
@@ -138,6 +142,71 @@ export class FabricRenderer {
         }, VIEWPORT_INITIAL_UPDATE_DELAY_MS);
         
         console.log(`✅ Fabric loaded successfully: ${geometry.numberOfRows}x${geometry.numberOfColumns} tiles`);
+    }
+
+    private buildCrossTileOverlay(geometry: FabricGeometry): void {
+        if (this.crossTileLayer) { this.crossTileLayer.destroy({ children: true }); }
+        this.crossTileLayer = new Container();
+        (this.crossTileLayer as any).userData = { type: 'crossTileLayer' };
+        this.fabricContainer.addChild(this.crossTileLayer);
+
+        const tileMap: any = geometry.tileGeomMap as any;
+        for (let r = 0; r < geometry.numberOfRows; r++) {
+            for (let c = 0; c < geometry.numberOfColumns; c++) {
+                const tileName = geometry.tileNames[r][c];
+                const loc = geometry.tileLocations[r][c];
+                if (!tileName || !loc) { continue; }
+                const tileGeom = tileMap.get ? tileMap.get(tileName) : tileMap[tileName as any];
+                if (!tileGeom || !tileGeom.crossTileConnections) { continue; }
+                for (const conn of tileGeom.crossTileConnections) {
+                    const g = new Graphics();
+                    const start = this.edgePoint(loc.x, loc.y, tileGeom.width, tileGeom.height, conn.direction);
+                    // Compute tentative end via offsets (tile-space)
+                    let endX = start.x + conn.dx * tileGeom.width;
+                    let endY = start.y + conn.dy * tileGeom.height;
+                    const targetCol = c + conn.dx;
+                    const targetRow = r + conn.dy;
+                    if (targetRow >= 0 && targetRow < geometry.numberOfRows && targetCol >= 0 && targetCol < geometry.numberOfColumns) {
+                        const destLoc = geometry.tileLocations[targetRow][targetCol];
+                        const destName = geometry.tileNames[targetRow][targetCol];
+                        let destGeom = null;
+                        if (destName) { destGeom = tileMap.get ? tileMap.get(destName) : tileMap[destName as any]; }
+                        if (destLoc && destGeom && typeof (destGeom as any).width === 'number' && typeof (destGeom as any).height === 'number') {
+                            const d: any = destGeom as any;
+                            const destPoint = this.edgePoint(destLoc.x, destLoc.y, d.width, d.height, this.oppositeDirection(conn.direction));
+                            endX = destPoint.x; endY = destPoint.y;
+                        }
+                    }
+                    g.moveTo(start.x, start.y);
+                    g.lineTo(endX, endY);
+                    g.stroke({ width: 1.1, color: 0xffa500, alpha: 0.0 }); // orange, alpha via LOD
+                    (g as any).userData = { type: 'crossTileWire', direction: conn.direction, source: conn.source, dest: conn.dest };
+                    this.crossTileLayer.addChild(g);
+                }
+            }
+        }
+        // Put design overlay above cross-tile wires
+        this.fabricContainer.setChildIndex(this.crossTileLayer, 0);
+    }
+
+    private edgePoint(x: number, y: number, w: number, h: number, dir: string) {
+        switch (dir) {
+            case 'NORTH': return { x: x + w / 2, y: y };
+            case 'SOUTH': return { x: x + w / 2, y: y + h };
+            case 'EAST': return { x: x + w, y: y + h / 2 };
+            case 'WEST': return { x: x, y: y + h / 2 };
+            default: return { x: x + w / 2, y: y + h / 2 };
+        }
+    }
+
+    private oppositeDirection(dir: string) {
+        switch (dir) {
+            case 'NORTH': return 'SOUTH';
+            case 'SOUTH': return 'NORTH';
+            case 'EAST': return 'WEST';
+            case 'WEST': return 'EAST';
+            default: return dir;
+        }
     }
 
     public loadDesign(designData: DesignData): void {
@@ -171,7 +240,7 @@ export class FabricRenderer {
     }
 
     private centerFabric(): void {
-        if (!this.currentGeometry) return;
+        if (!this.currentGeometry) { return; }
         
         const bounds = {
             x: 0,
@@ -305,7 +374,7 @@ export class FabricRenderer {
     }
 
     private highlightTile(elementData: any): void {
-        if (!this.currentGeometry || !elementData.position) return;
+    if (!this.currentGeometry || !elementData.position) { return; }
         
         const { tileLocations, tileGeomMap, tileNames } = this.currentGeometry;
         const tileLocation = tileLocations[elementData.position.y][elementData.position.x];
@@ -328,7 +397,7 @@ export class FabricRenderer {
     }
 
     private highlightBel(elementData: any): void {
-        if (!elementData.tilePosition) return;
+    if (!elementData.tilePosition) { return; }
         
         // First highlight the containing tile
         this.highlightTile({ type: 'tile', position: elementData.tilePosition });
@@ -344,7 +413,7 @@ export class FabricRenderer {
     }
 
     private highlightSwitchMatrix(elementData: any): void {
-        if (!elementData.tilePosition) return;
+    if (!elementData.tilePosition) { return; }
         
         // First highlight the containing tile
         this.highlightTile({ type: 'tile', position: elementData.tilePosition });
@@ -359,7 +428,7 @@ export class FabricRenderer {
     }
 
     private highlightPort(elementData: any): void {
-        if (!elementData.tilePosition) return;
+    if (!elementData.tilePosition) { return; }
         
         // First highlight the containing tile
         this.highlightTile({ type: 'tile', position: elementData.tilePosition });
@@ -376,7 +445,7 @@ export class FabricRenderer {
     }
 
     private highlightWireElement(elementData: any): void {
-        if (!elementData.tilePosition) return;
+    if (!elementData.tilePosition) { return; }
         
         // First highlight the containing tile
         this.highlightTile({ type: 'tile', position: elementData.tilePosition });

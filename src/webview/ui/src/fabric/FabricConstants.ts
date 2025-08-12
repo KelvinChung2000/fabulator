@@ -11,9 +11,10 @@
 
 /** Level of Detail thresholds matching JavaFX implementation */
 export enum LodLevel {
-    LOW = 0.15,     // for Bels (Rect -> Rects) - show only low-LOD rectangles
-    MEDIUM = 0.5,   // for Wires (Rect -> Lines) - show low-LOD substitutes  
-    HIGH = 1.7      // for Ports (Line -> Circles) - show all details
+    LOW = 0.15,      // Ultra-low / coarse view (tile + low-LOD blocks only)
+    MEDIUM = 0.5,    // Show batched internal tile wires (no ports or SM internals)
+    HIGH = 1.7,      // Show ports (BEL + SM) and begin to reveal SM internal wires
+    ULTRA = 2.3      // Fully zoomed in: SM internal wires fully visible
 }
 
 /** LOD update threshold to avoid unnecessary recalculations */
@@ -101,13 +102,24 @@ export const SWITCH_MATRIX_CONSTANTS = {
 /** Switch Matrix Wire rendering constants */
 export const SWITCH_MATRIX_WIRE_CONSTANTS = {
     DEFAULT_COLOR: 0x4A9EFF,      // Slightly more muted blue for better blending
-    DEFAULT_WIDTH: 0.6,           // Slightly thinner for better visual balance
+    DEFAULT_WIDTH: 0.8,           // Slightly thicker for better visibility
     DEFAULT_ALPHA: 1.0,           // Full alpha - LOD system will control transparency
     HIGHLIGHTED_COLOR: 0xFF6600,  // Orange for highlighted switch matrix wires
     HIGHLIGHTED_WIDTH: 1.2,       // Thicker when highlighted
-    MIN_WIDTH: 0.4,               // Minimum wire width at low zoom
+    MIN_WIDTH: 0.55,              // Minimum wire width at low zoom
     MAX_WIDTH: 1.5,               // Maximum wire width at high zoom
     LOD_THICKNESS_MULTIPLIER: 2.0 // Wire thickness scaling factor for LOD
+};
+
+// Simplified rendering mode: draw SM connections as straight, faint gray lines
+export const RENDER_MODES = {
+    SIMPLIFIED_SM_DIRECT: true
+};
+
+export const SM_DIRECT_WIRE_STYLE = {
+    COLOR: 0xB0B0B0, // faint gray
+    ALPHA: 0.35,
+    WIDTH: 0.8
 };
 
 /** Low LOD wire substitute colors (matching JavaFX) */
@@ -177,7 +189,8 @@ export const DEBUG_CONSTANTS = {
     LOG_LOD_CHANGES: false,       // Enable LOD change logging
     LOG_CULLING_STATS: false,     // Enable culling statistics logging
     SHOW_PERFORMANCE_STATS: false, // Show performance metrics
-    HIGHLIGHT_CULLED_OBJECTS: false // Visual debug for culled objects
+    HIGHLIGHT_CULLED_OBJECTS: false, // Visual debug for culled objects
+    FORCE_SHOW_SM_WIRES: true     // Debug: force show switch-matrix wires regardless of zoom
 };
 
 // =============================================================================
@@ -192,10 +205,39 @@ export function getLodLevel(zoomLevel: number): LodLevel {
         return LodLevel.LOW;
     } else if (zoomLevel < LodLevel.MEDIUM) {
         return LodLevel.MEDIUM;
-    } else {
+    } else if (zoomLevel < LodLevel.HIGH) {
         return LodLevel.HIGH;
+    } else {
+        return LodLevel.ULTRA;
     }
 }
+
+/**
+ * Compute smooth 0..1 factors for transitions between levels for blending.
+ * Each factor indicates progress within the interval [thresholdStart, thresholdEnd].
+ */
+export function getLodTransitionFactors(zoomLevel: number): {
+    lowToMedium: number;   // between LOW and MEDIUM
+    mediumToHigh: number;  // between MEDIUM and HIGH
+    highToUltra: number;   // between HIGH and ULTRA
+} {
+    const clamp01 = (v: number) => v < 0 ? 0 : (v > 1 ? 1 : v);
+    return {
+        lowToMedium: clamp01((zoomLevel - LodLevel.LOW) / (LodLevel.MEDIUM - LodLevel.LOW)),
+        mediumToHigh: clamp01((zoomLevel - LodLevel.MEDIUM) / (LodLevel.HIGH - LodLevel.MEDIUM)),
+        highToUltra: clamp01((zoomLevel - LodLevel.HIGH) / (LodLevel.ULTRA - LodLevel.HIGH))
+    };
+}
+
+/** Optional hysteresis percentage (e.g. 8%) for future stabilization */
+export const LOD_HYSTERESIS_PCT = 0.08;
+
+/** Structured thresholds reference */
+export const LOD_THRESHOLDS = {
+    LOW_TO_MEDIUM: LodLevel.LOW,
+    MEDIUM_TO_HIGH: LodLevel.MEDIUM,
+    HIGH_TO_ULTRA: LodLevel.HIGH
+};
 
 /**
  * Get appropriate culling buffer multiplier based on zoom level
@@ -234,11 +276,11 @@ export function hslToHex(h: number, s: number, l: number): number {
     l /= 100;
 
     const hue2rgb = (p: number, q: number, t: number): number => {
-        if (t < 0) t += 1;
-        if (t > 1) t -= 1;
-        if (t < 1/6) return p + (q - p) * 6 * t;
-        if (t < 1/2) return q;
-        if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+        if (t < 0) { t += 1; }
+        if (t > 1) { t -= 1; }
+        if (t < 1/6) { return p + (q - p) * 6 * t; }
+        if (t < 1/2) { return q; }
+        if (t < 2/3) { return p + (q - p) * (2/3 - t) * 6; }
         return p;
     };
 

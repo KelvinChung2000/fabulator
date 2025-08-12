@@ -41,6 +41,63 @@
         "command": "fabulator.highlightElement",
         "title": "Highlight in Viewer",
         "icon": "$(eye)"
+      },
+      {
+        "command": "fabulator.startFABulous",
+        "title": "Start FABulous CLI",
+        "category": "FABulator",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "fabulator.addProject",
+        "title": "Add FABulous Project Path",
+        "category": "FABulator",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "fabulator.showFabric",
+        "title": "Show Fabric (Smart)",
+        "category": "FABulator",
+        "icon": "$(preview)"
+      },
+      {
+        "command": "fabulator.removeProject",
+        "title": "Remove Project",
+        "icon": "$(close)"
+      },
+      {
+        "command": "fabulator.synth.addFile",
+        "title": "Add Synthesis Source",
+        "category": "FABulator",
+        "icon": "$(add)"
+      },
+      {
+        "command": "fabulator.synth.start",
+        "title": "Start Synthesis",
+        "category": "FABulator",
+        "icon": "$(play)"
+      },
+      {
+        "command": "fabulator.synth.removeFile",
+        "title": "Remove Synthesis Source",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "fabulator.pr.addFile",
+        "title": "Add Place & Route Source",
+        "category": "FABulator",
+        "icon": "$(add)"
+      },
+      {
+        "command": "fabulator.pr.start",
+        "title": "Start Place & Route",
+        "category": "FABulator",
+        "icon": "$(rocket)"
+      },
+      {
+        "command": "fabulator.pr.removeFile",
+        "title": "Remove Place & Route Source",
+        "icon": "$(trash)"
       }
     ],
     "views": {
@@ -54,6 +111,21 @@
         {
           "id": "fabulator.fabricExplorer",
           "name": "Fabric Explorer",
+          "when": "true"
+        },
+        {
+          "id": "fabulator.projects",
+          "name": "Projects",
+          "when": "true"
+        },
+        {
+          "id": "fabulator.synthesis",
+          "name": "Synthesis",
+          "when": "true"
+        },
+        {
+          "id": "fabulator.placeRoute",
+          "name": "Place & Route",
           "when": "true"
         }
       ]
@@ -76,6 +148,18 @@
         {
           "command": "fabulator.openDesign",
           "title": "FABulator: Open Design"
+        },
+        {
+          "command": "fabulator.startFABulous",
+          "title": "FABulator: Start FABulous CLI"
+        },
+        {
+          "command": "fabulator.addProject",
+          "title": "FABulator: Add Project Path"
+        },
+        {
+          "command": "fabulator.showFabric",
+          "title": "FABulator: Show Fabric (Smart)"
         }
       ],
       "view/title": [
@@ -88,6 +172,16 @@
           "command": "fabulator.refreshSidebar",
           "when": "view == fabulator.fabricExplorer",
           "group": "navigation@2"
+        },
+        {
+          "command": "fabulator.addProject",
+          "when": "view == fabulator.projects",
+          "group": "navigation@1"
+        },
+        {
+          "command": "fabulator.showFabric",
+          "when": "view == fabulator.projects",
+          "group": "navigation@2"
         }
       ],
       "view/item/context": [
@@ -95,6 +189,21 @@
           "command": "fabulator.highlightElement",
           "when": "view == fabulator.fabricExplorer && viewItem =~ /^(tile|bel|switchMatrix|port|wire)$/",
           "group": "navigation"
+        },
+        {
+          "command": "fabulator.removeProject",
+          "when": "view == fabulator.projects && viewItem == fabulatorProject",
+          "group": "inline"
+        },
+        {
+          "command": "fabulator.synth.removeFile",
+          "when": "view == fabulator.synthesis && viewItem == implFile",
+          "group": "inline"
+        },
+        {
+          "command": "fabulator.pr.removeFile",
+          "when": "view == fabulator.placeRoute && viewItem == implFile",
+          "group": "inline"
         }
       ]
     }
@@ -116,7 +225,14 @@
     "test:webview": "vitest run --config vitest.webview.config.ts",
     "test:webview:watch": "vitest --config vitest.webview.config.ts",
     "test:webview:ui": "vitest --ui --config vitest.webview.config.ts",
-    "test:all": "npm run test:unit && npm run test:webview"
+    "test:all": "npm run test:unit && npm run test:webview",
+    "playwright:install": "npx playwright install --with-deps",
+    "playwright:test": "playwright test",
+    "playwright:update": "PLAYWRIGHT_UPDATE_SNAPSHOTS=1 playwright test",
+    "visual:test": "npm run build:webview && playwright test",
+    "playwright:info": "playwright test tests/info/geometry-info.spec.ts",
+    "playwright:design": "playwright test tests/info/design-info.spec.ts",
+    "geometry:csv2json": "node scripts/convert-geometry-csv.js tests/fixtures/test-geometry.csv src/webview/ui/geometry.json"
   },
   "dependencies": {
     "@pixi/unsafe-eval": "^7.4.3",
@@ -146,6 +262,7 @@
     "jsdom": "^26.0.0",
     "typescript": "^5.8.3",
     "vite": "^6.1.1",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "@playwright/test": "^1.48.2"
   }
 }

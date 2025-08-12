@@ -87,6 +87,16 @@ export interface TileGeometry {
     wireGeometryList: WireGeometry[];
     lowLodWiresGeoms: LowLodWiresGeometry[];
     lowLodOverlays: LowLodWiresGeometry[];
+    crossTileConnections?: CrossTileConnection[];
+    tileCsvPath?: string;
+}
+
+export interface CrossTileConnection {
+    direction: string; // NORTH/SOUTH/EAST/WEST
+    source: string;
+    dest: string;
+    dx: number;
+    dy: number;
 }
 
 export interface FabricGeometry {
