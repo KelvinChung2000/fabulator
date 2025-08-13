@@ -9,7 +9,7 @@
  */
 
 import { Graphics, Container } from 'pixi.js';
-import { FabricGeometry } from '../types/geometry';
+import { FabricDataShape } from '../types/FabricData';
 import { DesignData, DesignUtils, DiscreteLocation, ConnectedPorts } from '../types/design';
 import { 
     WIRE_CONSTANTS,
@@ -22,7 +22,7 @@ export type DesignConnectionClickCallback = (ports: ConnectedPorts, location: Di
 export class DesignRenderer {
     private designContainer: Container;
     private tileContainers: Container[][] = [];
-    private currentGeometry: FabricGeometry | null = null;
+    private currentGeometry: FabricDataShape | null = null;
     private currentDesign: DesignData | null = null;
     
     // Event callbacks
@@ -36,7 +36,7 @@ export class DesignRenderer {
     // INITIALIZATION
     // =============================================================================
 
-    public initializeForGeometry(geometry: FabricGeometry, tileContainers: Container[][]): void {
+    public initializeForGeometry(geometry: FabricDataShape, tileContainers: Container[][]): void {
         this.currentGeometry = geometry;
         this.tileContainers = tileContainers;
     }

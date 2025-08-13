@@ -1,10 +1,10 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { Application, Graphics, Container } from 'pixi.js';
-import { FabricGeometry } from '../types/geometry';
+import { FabricDataShape } from '../types/FabricData';
 import './WorldView.css';
 
 interface WorldViewProps {
-    geometry: FabricGeometry | null;
+    geometry: FabricDataShape | null;
     viewportBounds: { x: number; y: number; width: number; height: number };
     onViewportClick: (x: number, y: number) => void;
     className?: string;
@@ -20,14 +20,14 @@ export const WorldView: React.FC<WorldViewProps> = ({
     const appRef = useRef<Application | null>(null);
     const containerRef = useRef<Container | null>(null);
     const viewportIndicatorRef = useRef<Graphics | null>(null);
-    const transformRef = useRef<{ 
-        scale: number; 
-        offsetX: number; 
-        offsetY: number; 
-        minX?: number; 
-        minY?: number; 
-        fabricWidth?: number; 
-        fabricHeight?: number; 
+    const transformRef = useRef<{
+        scale: number;
+        offsetX: number;
+        offsetY: number;
+        minX?: number;
+        minY?: number;
+        fabricWidth?: number;
+        fabricHeight?: number;
     }>({ scale: 1, offsetX: 0, offsetY: 0 });
     const [isInitialized, setIsInitialized] = useState(false);
 
@@ -152,13 +152,13 @@ export const WorldView: React.FC<WorldViewProps> = ({
 
         // Apply scale and center the fabric in the minimap
         fabricGraphics.scale.set(scale);
-        
+
         // Center the fabric properly accounting for its actual bounds
         const scaledWidth = fabricWidth * scale;
         const scaledHeight = fabricHeight * scale;
         const scaledMinX = minX * scale;
         const scaledMinY = minY * scale;
-        
+
         // Position to center the scaled fabric in the minimap
         fabricGraphics.x = (app.screen.width - scaledWidth) / 2 - scaledMinX;
         fabricGraphics.y = (app.screen.height - scaledHeight) / 2 - scaledMinY;
@@ -171,9 +171,9 @@ export const WorldView: React.FC<WorldViewProps> = ({
         container.addChild(viewportIndicator);
 
         // Store scale and offset for click handling (using actual fabric bounds)
-        transformRef.current = { 
-            scale, 
-            offsetX: fabricGraphics.x, 
+        transformRef.current = {
+            scale,
+            offsetX: fabricGraphics.x,
             offsetY: fabricGraphics.y,
             minX,
             minY,

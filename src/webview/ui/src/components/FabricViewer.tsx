@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { Application } from 'pixi.js'
-import { FabricRenderer } from '../fabric/FabricRenderer'
+import { FabricDrawingManager } from '../fabric/FabricDrawingManager'
+import { FabricDataShape } from '../types/FabricData'
 import { ZoomControls } from './ZoomControls'
 import { WorldView } from './WorldView'
 import { FabricGeometry } from '../types/geometry'
@@ -13,13 +14,13 @@ interface FabricViewerProps {
 const FabricViewer: React.FC<FabricViewerProps> = ({ onMessage }) => {
   const canvasRef = useRef<HTMLDivElement>(null)
   const appRef = useRef<Application | null>(null)
-  const rendererRef = useRef<FabricRenderer | null>(null)
+  const rendererRef = useRef<FabricDrawingManager | null>(null)
   const isInitializedRef = useRef(false)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [currentFabric, setCurrentFabric] = useState<string | null>(null)
   const [currentDesign, setCurrentDesign] = useState<string | null>(null)
-  const [currentGeometry, setCurrentGeometry] = useState<FabricGeometry | null>(null)
+  const [currentGeometry, setCurrentGeometry] = useState<FabricDataShape | null>(null)
   const [zoomLevel, setZoomLevel] = useState(1)
   const [viewportBounds, setViewportBounds] = useState({ x: 0, y: 0, width: 100, height: 100 })
 
@@ -123,7 +124,7 @@ const FabricViewer: React.FC<FabricViewerProps> = ({ onMessage }) => {
         // Create enhanced fabric renderer
         console.log('Creating FabricRenderer...')
         try {
-          const renderer = new FabricRenderer(app)
+          const renderer = new FabricDrawingManager(app)
           rendererRef.current = renderer
           console.log('FabricRenderer created successfully:', renderer)
         } catch (rendererError) {
@@ -282,8 +283,15 @@ const FabricViewer: React.FC<FabricViewerProps> = ({ onMessage }) => {
     }
   }, [])
 
-  const handleLoadFabric = (fabricData: FabricGeometry) => {
+  const handleLoadFabric = (fabricData: any) => {
     console.log('handleLoadFabric called with:', fabricData)
+    try {
+      const keys = Object.keys(fabricData || {})
+      console.log('[FAB DEBUG] Fabric data keys:', keys)
+      console.log('[FAB DEBUG] numberOfRows:', (fabricData as any).numberOfRows, 'tiles length:', (fabricData as any).tiles && (fabricData as any).tiles.length)
+      console.log('[FAB DEBUG] numberOfColumns:', (fabricData as any).numberOfColumns, 'first row length:', (fabricData as any).tiles && (fabricData as any).tiles[0] && (fabricData as any).tiles[0].length)
+      console.log('[FAB DEBUG] Raw height/width props (if present):', (fabricData as any).height, (fabricData as any).width)
+    } catch (e) { console.warn('[FAB DEBUG] key dump failed', e) }
     console.log('Renderer status:', {
       rendererExists: !!rendererRef.current,
       appExists: !!appRef.current,
@@ -315,9 +323,9 @@ const FabricViewer: React.FC<FabricViewerProps> = ({ onMessage }) => {
       console.log('Loading fabric:', fabricData.name)
       console.log('Renderer object:', rendererRef.current)
       console.log('Renderer loadFabric method:', rendererRef.current.loadFabric)
-      
+
       rendererRef.current.loadFabric(fabricData)
-      
+
       console.log(`🚨🚨🚨 RENDERER LOADFABRIC RETURNED 🚨🚨🚨`)
       setCurrentFabric(fabricData.name)
       setCurrentGeometry(fabricData)
@@ -359,7 +367,7 @@ const FabricViewer: React.FC<FabricViewerProps> = ({ onMessage }) => {
   // WorldView navigation handler
   const handleWorldViewClick = (x: number, y: number) => {
     if (!rendererRef.current) return
-    
+
     // Use immediate pan for minimap clicks to avoid culling delays
     rendererRef.current.panToImmediate(x, y)
   }

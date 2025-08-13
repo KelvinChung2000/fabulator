@@ -11,6 +11,7 @@
 
 import { Graphics, Container } from 'pixi.js';
 import { FabricGeometry, TileGeometry, Location, WireGeometry, SwitchMatrixGeometry, SwitchMatrixWireGeometry, PortGeometry } from '../types/geometry';
+import { FabricDataShape } from '../types/FabricData';
 import { 
     TILE_CONSTANTS,
     SWITCH_MATRIX_CONSTANTS,
@@ -35,7 +36,7 @@ export type WireClickCallback = (wireGeometry: WireGeometry) => void;
 
 export class TileRenderer {
     private fabricContainer: Container;
-    private currentGeometry: FabricGeometry | null = null;
+    private currentGeometry: FabricDataShape | null = null;
     private tileContainers: Container[][] = [];
 
     // Event callbacks
@@ -53,10 +54,8 @@ export class TileRenderer {
     // INITIALIZATION AND BUILDING
     // =============================================================================
 
-    public buildFabric(geometry: FabricGeometry): Container[][] {
-        console.log(`🚨🚨🚨 BUILDING FABRIC DEBUG TEST 🚨🚨🚨`);
-        console.log(`🎪 BUILDING FABRIC: ${geometry.numberOfRows}x${geometry.numberOfColumns} tiles`);
-        console.log(`   - Total tile types: ${Object.keys(geometry.tileGeomMap).length}`);
+    public buildFabric(geometry: FabricDataShape): Container[][] {
+    // Build fabric tiles
         
         this.currentGeometry = geometry;
         this.clearFabric();
@@ -85,17 +84,10 @@ export class TileRenderer {
             }
         }
         
-        console.log(`✅ FABRIC BUILD COMPLETE: ${tilesWithSwitchMatrix} tiles have switch matrices`);
-        console.log(`   - Tile geometry map keys:`, Object.keys(geometry.tileGeomMap).slice(0, 5));
+    // Build complete summary
         
         // Debug: Check a few tile geometries for switch matrix info
-        Object.entries(geometry.tileGeomMap).slice(0, 3).forEach(([name, tileGeom]) => {
-            console.log(`   - Tile ${name}: has SM = ${!!tileGeom.smGeometry}`);
-            if (tileGeom.smGeometry) {
-                const sm = tileGeom.smGeometry;
-                console.log(`     SM: ${sm.name}, ports: ${sm.portGeometryList.length + sm.jumpPortGeometryList.length}`);
-            }
-        });
+    // Sample tile stats removed
 
         // Build fabric markers
         this.buildMarkers();
@@ -103,7 +95,7 @@ export class TileRenderer {
         return this.tileContainers;
     }
 
-    private initializeTileContainers(geometry: FabricGeometry): Container[][] {
+    private initializeTileContainers(geometry: FabricDataShape): Container[][] {
         const containers: Container[][] = [];
         for (let y = 0; y < geometry.numberOfRows; y++) {
             containers[y] = [];
@@ -125,11 +117,7 @@ export class TileRenderer {
     // =============================================================================
 
     private createTile(tileGeometry: TileGeometry, location: Location, fabricX: number, fabricY: number): void {
-        console.log(`🏗️ CREATING TILE: ${tileGeometry.name} at (${fabricX},${fabricY})`);
-        console.log(`   - Has switch matrix: ${!!tileGeometry.smGeometry}`);
-        if (tileGeometry.smGeometry) {
-            console.log(`   - Switch matrix name: ${tileGeometry.smGeometry.name}`);
-        }
+    // Creating tile
         
         const tileContainer = this.tileContainers[fabricY][fabricX];
         tileContainer.x = location.x;
@@ -141,7 +129,7 @@ export class TileRenderer {
 
         // Create switch matrix if present
         if (tileGeometry.smGeometry) {
-            console.log(`   ➡️  Creating switch matrix for tile ${tileGeometry.name}`);
+            // Creating switch matrix for tile
             this.createSwitchMatrix(tileGeometry.smGeometry, tileContainer);
             this.createLowLodSubstitute(tileGeometry.smGeometry, tileContainer);
         }
@@ -192,7 +180,7 @@ export class TileRenderer {
     // =============================================================================
 
     private createSwitchMatrix(smGeometry: any, tileContainer: Container): void {
-        console.log(`🎛️ CREATE SWITCH MATRIX: ${smGeometry.name} - Starting creation...`);
+    // Create switch matrix
         
     const smContainer = new Container();
     smContainer.sortableChildren = true;
@@ -235,7 +223,7 @@ export class TileRenderer {
             }
         }
 
-        console.log(`🔌 About to create switch matrix wires for ${smGeometry.name}...`);
+    // Create switch matrix wires
         
         // Create switch matrix internal wires
     this.createSwitchMatrixWires(smGeometry, smContainer);
@@ -271,7 +259,7 @@ export class TileRenderer {
             others.sort((a,b) => a.name.localeCompare(b.name));
             others.forEach((p,i) => { p.relX = margin + stepX * (i+1); p.relY = height - margin; });
         }
-        console.log(`🔧 Auto-laid out SM ports for ${smGeometry.name}: left=${leftSources.length} right=${rightDests.length} bottom=${others.length}`);
+    // Auto-laid out SM ports
     }
 
     private createSwitchMatrixPort(port: any, smContainer: Container, smGeometry: any, portType: 'regular' | 'jump'): void {
@@ -304,18 +292,13 @@ export class TileRenderer {
     }
 
     private createSwitchMatrixWires(smGeometry: SwitchMatrixGeometry, smContainer: Container): void {
-        console.log(`🔌 Creating switch matrix wires for ${smGeometry.name}:`);
-        console.log(`    - Object keys:`, Object.keys(smGeometry));
-        console.log(`    - Has switchMatrixWires:`, 'switchMatrixWires' in smGeometry);
-        console.log(`    - switchMatrixWires value:`, smGeometry.switchMatrixWires);
-        console.log(`    - Ports: ${smGeometry.portGeometryList.length} regular, ${smGeometry.jumpPortGeometryList.length} jump`);
-        console.log(`    - Dimensions: ${smGeometry.width}x${smGeometry.height}`);
+    // Creating switch matrix wires details removed
         
         const allPorts = [...smGeometry.portGeometryList, ...smGeometry.jumpPortGeometryList];
         
         // Debug: Print all port positions
         allPorts.forEach((port, i) => {
-            console.log(`    Port ${i}: ${port.name} at (${port.relX}, ${port.relY})`);
+            // Port detail
         });
 
         // Use real switch matrix wires from CSV parsing if available
@@ -1091,7 +1074,7 @@ export class TileRenderer {
         return this.tileContainers;
     }
 
-    public getCurrentGeometry(): FabricGeometry | null {
+    public getCurrentGeometry(): FabricDataShape | null {
         return this.currentGeometry;
     }
 

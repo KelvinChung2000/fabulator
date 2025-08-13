@@ -22,7 +22,8 @@ import {
     WIRE_CONSTANTS,
     SWITCH_MATRIX_WIRE_CONSTANTS
 } from './FabricConstants';
-import { FabricGeometry, TileGeometry } from '../types/geometry';
+import { TileGeometry } from '../types/geometry';
+import { FabricDataShape } from '../types/FabricData';
 
 export type WireThicknessUpdateCallback = (tileThickness: number, switchMatrixThickness: number) => void;
 
@@ -31,7 +32,7 @@ export class ViewportCullingLODManager {
     private tileContainers: Container[][] = [];
     private currentLOD: number = DEFAULT_LOD_LEVEL;
     private culledObjects: Set<Container> = new Set();
-    private currentGeometry: FabricGeometry | null = null;
+    private currentGeometry: FabricDataShape | null = null;
     
     // LOD throttling (matching JavaFX 40ms throttle)
     private lastLODUpdate: number = 0;
@@ -56,7 +57,7 @@ export class ViewportCullingLODManager {
     // INITIALIZATION
     // =============================================================================
 
-    public initializeForGeometry(geometry: FabricGeometry, tileContainers: Container[][]): void {
+    public initializeForGeometry(geometry: FabricDataShape, tileContainers: Container[][]): void {
         this.currentGeometry = geometry;
         this.tileContainers = tileContainers;
         this.culledObjects.clear();
@@ -116,7 +117,7 @@ export class ViewportCullingLODManager {
 
     const zoom = this.viewport.scale.x;
     const viewportBounds = this.viewport.getVisibleBounds();
-    const geom: any = this.currentGeometry as FabricGeometry; // non-null asserted above, cast to any for flexible indexing
+    const geom: any = this.currentGeometry as any; // flexible indexing
         const bufferMultiplier = getCullingBufferMultiplier(zoom);
         
         // Calculate buffered viewport bounds for smoother culling

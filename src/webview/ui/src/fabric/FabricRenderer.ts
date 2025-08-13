@@ -11,7 +11,8 @@
  */
 
 import { Application, Container, Graphics } from 'pixi.js';
-import { FabricGeometry, TileGeometry, WireGeometry } from '../types/geometry';
+import { TileGeometry, WireGeometry } from '../types/geometry';
+import { FabricData, FabricDataShape } from '../types/FabricData';
 import { DesignData, DiscreteLocation, ConnectedPorts } from '../types/design';
 
 // Import all the new modular components
@@ -33,6 +34,8 @@ export class FabricRenderer {
     private fabricContainer: Container;
     private designContainer: Container;
     private crossTileLayer: Container | null = null;
+    private tooltipLayer: Container | null = null;
+    private tooltip?: { container: Container; bg: Graphics; text: any };
     
     // Modular managers
     private viewportManager: ViewportManager;
@@ -41,7 +44,7 @@ export class FabricRenderer {
     private designRenderer: DesignRenderer;
     
     // State tracking
-    private currentGeometry: FabricGeometry | null = null;
+    private currentGeometry: FabricDataShape | null = null;
     private currentDesign: DesignData | null = null;
     private tileContainers: Container[][] = [];
 
@@ -61,6 +64,11 @@ export class FabricRenderer {
         // Initialize renderers
         this.tileRenderer = new TileRenderer(this.fabricContainer);
         this.designRenderer = new DesignRenderer(this.designContainer);
+
+    // Tooltip overlay layer (above fabric, below design overlay for now)
+    this.tooltipLayer = new Container();
+    this.viewportManager.getViewport().addChild(this.tooltipLayer);
+    this.createTooltip();
         
         // Set up wire thickness update callback for LOD manager
         this.cullingLODManager.setWireThicknessUpdateCallback((tileThickness, smThickness) => {
@@ -114,10 +122,21 @@ export class FabricRenderer {
     // FABRIC LOADING
     // =============================================================================
 
-    public loadFabric(geometry: FabricGeometry): void {
-        console.log(`🚨🚨🚨 LOAD FABRIC CALLED 🚨🚨🚨`);
-        console.log(`🏗️  Loading fabric: ${geometry.name}`);
-        console.log(`    Geometry object:`, geometry);
+    public loadFabric(geometry: FabricDataShape): void {
+        // Validate required serialized fields (strict mode)
+    const requiredKeys: (keyof FabricDataShape)[] = ['tiles','tileDict','wireDict','_subTileToTile'];
+        for (const k of requiredKeys) {
+            if ((geometry as any)[k] === undefined) {
+                throw new Error(`Serialized fabric missing required field: ${String(k)}`);
+            }
+        }
+        // Dimension validation
+        if (geometry.tiles.length !== geometry.numberOfRows) {
+            throw new Error(`tiles length ${geometry.tiles.length} != numberOfRows ${geometry.numberOfRows}`);
+        }
+        if (geometry.tiles.some(row => row.length !== geometry.numberOfColumns)) {
+            throw new Error(`row length mismatch numberOfColumns ${geometry.numberOfColumns}`);
+        }
         
         this.currentGeometry = geometry;
         this.clearFabric();
@@ -141,52 +160,133 @@ export class FabricRenderer {
             this.viewportManager.forceViewportUpdate();
         }, VIEWPORT_INITIAL_UPDATE_DELAY_MS);
         
-        console.log(`✅ Fabric loaded successfully: ${geometry.numberOfRows}x${geometry.numberOfColumns} tiles`);
+    // Successfully loaded
     }
 
-    private buildCrossTileOverlay(geometry: FabricGeometry): void {
+    private buildCrossTileOverlay(geometry: FabricDataShape): void {
         if (this.crossTileLayer) { this.crossTileLayer.destroy({ children: true }); }
         this.crossTileLayer = new Container();
         (this.crossTileLayer as any).userData = { type: 'crossTileLayer' };
         this.fabricContainer.addChild(this.crossTileLayer);
 
-        const tileMap: any = geometry.tileGeomMap as any;
+        // Use wireDict for richer aggregate cross-tile representation
+        // wireDict keys like "(dx, dy)" contain array entries with wireCount and metadata
+        // We'll aggregate per origin tile using relative offsets from geometry.tiles grid
+        const baseStroke = 0.6; // minimal thickness
         for (let r = 0; r < geometry.numberOfRows; r++) {
             for (let c = 0; c < geometry.numberOfColumns; c++) {
-                const tileName = geometry.tileNames[r][c];
+                const tileType = geometry.tiles[r][c];
+                if (!tileType) { continue; }
                 const loc = geometry.tileLocations[r][c];
-                if (!tileName || !loc) { continue; }
-                const tileGeom = tileMap.get ? tileMap.get(tileName) : tileMap[tileName as any];
-                if (!tileGeom || !tileGeom.crossTileConnections) { continue; }
-                for (const conn of tileGeom.crossTileConnections) {
+                if (!loc) { continue; }
+                // Iterate over all possible deltas in wireDict to draw from this origin if relevant
+                for (const deltaKey of Object.keys(geometry.wireDict)) {
+                    const match = deltaKey.match(/\(([-0-9]+),\s*([-0-9]+)\)/);
+                    if (!match) { continue; }
+                    const dx = parseInt(match[1], 10);
+                    const dy = parseInt(match[2], 10);
+                    const targetRow = r + dy;
+                    const targetCol = c + dx;
+                    if (targetRow < 0 || targetRow >= geometry.numberOfRows || targetCol < 0 || targetCol >= geometry.numberOfColumns) { continue; }
+                    const entries: any[] = geometry.wireDict[deltaKey];
+                    if (!entries || entries.length === 0) { continue; }
+                    // Aggregate wireCount for stylistic width scaling
+                    let total = 0;
+                    for (const e of entries) { if (typeof e.wireCount === 'number') { total += e.wireCount; } }
+                    if (total === 0) { continue; }
+                    // Draw a single representative bundle line between tile centers (or improved edge mapping)
+                    const targetLoc = geometry.tileLocations[targetRow][targetCol];
+                    if (!targetLoc) { continue; }
+                    const startX = loc.x + (geometry.tileGeomMap[geometry.tileNames[r][c] || '']?.width || 0) / 2;
+                    const startY = loc.y + (geometry.tileGeomMap[geometry.tileNames[r][c] || '']?.height || 0) / 2;
+                    const endX = targetLoc.x + (geometry.tileGeomMap[geometry.tileNames[targetRow][targetCol] || '']?.width || 0) / 2;
+                    const endY = targetLoc.y + (geometry.tileGeomMap[geometry.tileNames[targetRow][targetCol] || '']?.height || 0) / 2;
                     const g = new Graphics();
-                    const start = this.edgePoint(loc.x, loc.y, tileGeom.width, tileGeom.height, conn.direction);
-                    // Compute tentative end via offsets (tile-space)
-                    let endX = start.x + conn.dx * tileGeom.width;
-                    let endY = start.y + conn.dy * tileGeom.height;
-                    const targetCol = c + conn.dx;
-                    const targetRow = r + conn.dy;
-                    if (targetRow >= 0 && targetRow < geometry.numberOfRows && targetCol >= 0 && targetCol < geometry.numberOfColumns) {
-                        const destLoc = geometry.tileLocations[targetRow][targetCol];
-                        const destName = geometry.tileNames[targetRow][targetCol];
-                        let destGeom = null;
-                        if (destName) { destGeom = tileMap.get ? tileMap.get(destName) : tileMap[destName as any]; }
-                        if (destLoc && destGeom && typeof (destGeom as any).width === 'number' && typeof (destGeom as any).height === 'number') {
-                            const d: any = destGeom as any;
-                            const destPoint = this.edgePoint(destLoc.x, destLoc.y, d.width, d.height, this.oppositeDirection(conn.direction));
-                            endX = destPoint.x; endY = destPoint.y;
-                        }
-                    }
-                    g.moveTo(start.x, start.y);
+                    g.moveTo(startX, startY);
                     g.lineTo(endX, endY);
-                    g.stroke({ width: 1.1, color: 0xffa500, alpha: 0.0 }); // orange, alpha via LOD
-                    (g as any).userData = { type: 'crossTileWire', direction: conn.direction, source: conn.source, dest: conn.dest };
+                    // Width scaling: logarithmic for large counts to prevent overpowering
+                    const width = baseStroke + Math.log10(total + 1) * 1.2;
+                    g.stroke({ width, color: 0xffa500, alpha: 0.35 });
+                    const startTileName = geometry.tileNames[r][c];
+                    const endTileName = geometry.tileNames[targetRow][targetCol];
+                    (g as any).userData = { type: 'crossTileWireBundle', totalWireCount: total, dx, dy, entries, startTileName, endTileName };
+                    g.eventMode = 'static';
+                    g.cursor = 'pointer';
+                    g.on('pointerover', (ev: any) => this.showWireTooltip(ev.global.x, ev.global.y, g));
+                    g.on('pointermove', (ev: any) => this.moveTooltip(ev.global.x, ev.global.y));
+                    g.on('pointerout', () => this.hideTooltip());
                     this.crossTileLayer.addChild(g);
                 }
             }
         }
         // Put design overlay above cross-tile wires
         this.fabricContainer.setChildIndex(this.crossTileLayer, 0);
+    }
+
+    // =============================================================================
+    // TOOLTIP IMPLEMENTATION
+    // =============================================================================
+
+    private createTooltip() {
+        if (!this.tooltipLayer) { return; }
+        const container = new Container();
+        container.visible = false;
+        const bg = new Graphics();
+        // We'll use PIXI Text via dynamic import to keep existing imports minimal
+        // Lazy creation pattern: store plain object placeholder; real text assigned later.
+        const anyContainer: any = container;
+        anyContainer.label = null;
+        container.addChild(bg);
+        this.tooltipLayer.addChild(container);
+        this.tooltip = { container, bg, text: null };
+    }
+
+    private ensureTooltipText() {
+        if (!this.tooltip) { return; }
+        if (this.tooltip.text) { return; }
+        // Dynamic require to avoid top-level import churn if not already present.
+        const { Text } = require('pixi.js');
+        const textObj = new Text({ text: '', style: { fontSize: 12, fill: 0xffffff } });
+        this.tooltip.container.addChild(textObj);
+        this.tooltip.text = textObj;
+    }
+
+    private showWireTooltip(x: number, y: number, g: Graphics) {
+        if (!this.tooltip) { return; }
+        this.ensureTooltipText();
+        const data = (g as any).userData;
+        const lines: string[] = [];
+        lines.push(`Bundle`);
+        if (data.startTileName && data.endTileName) {
+            lines.push(`${data.startTileName} → ${data.endTileName}`);
+        }
+        if (typeof data.totalWireCount === 'number') {
+            lines.push(`Wires: ${data.totalWireCount}`);
+        }
+        // Upstream / downstream endpoints: treat start as upstream, end as downstream.
+        const text = lines.join('\n');
+        if (this.tooltip.text) { this.tooltip.text.text = text; }
+        // Resize background
+        this.tooltip.bg.clear();
+        const padding = 6;
+        const w = this.tooltip.text ? this.tooltip.text.width + padding * 2 : 40;
+        const h = this.tooltip.text ? this.tooltip.text.height + padding * 2 : 20;
+        this.tooltip.bg.roundRect(0, 0, w, h, 4).fill({ color: 0x000000, alpha: 0.75 }).stroke({ width: 1, color: 0xffa500, alpha: 0.9 });
+        if (this.tooltip.text) { this.tooltip.text.x = padding; this.tooltip.text.y = padding; }
+        this.tooltip.container.x = x + 12;
+        this.tooltip.container.y = y + 12;
+        this.tooltip.container.visible = true;
+    }
+
+    private moveTooltip(x: number, y: number) {
+        if (!this.tooltip || !this.tooltip.container.visible) { return; }
+        this.tooltip.container.x = x + 12;
+        this.tooltip.container.y = y + 12;
+    }
+
+    private hideTooltip() {
+        if (!this.tooltip) { return; }
+        this.tooltip.container.visible = false;
     }
 
     private edgePoint(x: number, y: number, w: number, h: number, dir: string) {
@@ -210,19 +310,19 @@ export class FabricRenderer {
     }
 
     public loadDesign(designData: DesignData): void {
-        console.log(`🎯 Loading design: ${designData.filePath}`);
+    // Loading design
         
         this.currentDesign = designData;
         this.clearDesign();
         
         if (this.currentGeometry) {
-            console.log('✅ Building design overlay');
+            // Building design overlay
             this.designRenderer.buildDesignOverlay(designData);
         } else {
             console.warn('⚠️  No geometry loaded - cannot display design overlay');
         }
         
-        console.log(`✅ Design loaded: ${designData.statistics.totalNets} nets, ${designData.statistics.totalConnections} connections`);
+    // Design loaded summary
     }
 
     // =============================================================================
@@ -364,7 +464,7 @@ export class FabricRenderer {
                 this.highlightNet(elementData.name);
                 break;
             default:
-                console.log(`Highlighting not implemented for type: ${elementData.type}`);
+                // Unsupported highlight type
         }
     }
 
@@ -391,7 +491,7 @@ export class FabricRenderer {
                 // Highlight the tile
                 this.tileRenderer.highlightTileByPosition(elementData.position.x, elementData.position.y);
                 
-                console.log(`Highlighted and panned to tile ${tileName} at (${centerX}, ${centerY})`);
+                // Highlighted tile centered
             }
         }
     }
@@ -409,7 +509,7 @@ export class FabricRenderer {
             elementData.name
         );
         
-        console.log(`Highlighted BEL ${elementData.name} in tile at (${elementData.tilePosition.x}, ${elementData.tilePosition.y})`);
+    // Highlighted BEL
     }
 
     private highlightSwitchMatrix(elementData: any): void {
@@ -424,7 +524,7 @@ export class FabricRenderer {
             elementData.tilePosition.y
         );
         
-        console.log(`Highlighted switch matrix in tile at (${elementData.tilePosition.x}, ${elementData.tilePosition.y})`);
+    // Highlighted switch matrix
     }
 
     private highlightPort(elementData: any): void {
@@ -441,7 +541,7 @@ export class FabricRenderer {
             elementData.parentName // BEL or switch matrix name
         );
         
-        console.log(`Highlighted port ${elementData.name} in ${elementData.parentName} at tile (${elementData.tilePosition.x}, ${elementData.tilePosition.y})`);
+    // Highlighted port
     }
 
     private highlightWireElement(elementData: any): void {
@@ -457,7 +557,7 @@ export class FabricRenderer {
             elementData.name
         );
         
-        console.log(`Highlighted wire ${elementData.name} in tile at (${elementData.tilePosition.x}, ${elementData.tilePosition.y})`);
+    // Highlighted wire
     }
 
     // =============================================================================
@@ -473,42 +573,42 @@ export class FabricRenderer {
     // Tile interaction callbacks
     private onTileClick(tileGeometry: TileGeometry, x: number, y: number): void {
         if (DEBUG_CONSTANTS.LOG_VIEWPORT_EVENTS) {
-            console.log(`🖱️ Tile clicked: ${tileGeometry.name} at (${x}, ${y})`);
+            // Tile click
         }
         // Could emit events or call external callbacks here
     }
 
     private onSwitchMatrixClick(smGeometry: any): void {
         if (DEBUG_CONSTANTS.LOG_VIEWPORT_EVENTS) {
-            console.log(`🖱️ Switch Matrix clicked:`, smGeometry);
+            // Switch matrix click
         }
         // Could emit events or call external callbacks here
     }
 
     private onBelClick(belGeometry: any): void {
         if (DEBUG_CONSTANTS.LOG_VIEWPORT_EVENTS) {
-            console.log(`🖱️ BEL clicked:`, belGeometry);
+            // BEL click
         }
         // Could emit events or call external callbacks here
     }
 
     private onPortClick(port: any): void {
         if (DEBUG_CONSTANTS.LOG_VIEWPORT_EVENTS) {
-            console.log(`🖱️ Port clicked:`, port);
+            // Port click
         }
         // Could emit events or call external callbacks here
     }
 
     private onInternalWireClick(wireGeometry: WireGeometry): void {
         if (DEBUG_CONSTANTS.LOG_VIEWPORT_EVENTS) {
-            console.log(`🖱️ Internal wire clicked:`, wireGeometry.name);
+            // Internal wire click
         }
         // Could emit events or call external callbacks here
     }
 
     private onDesignConnectionClick(ports: ConnectedPorts, location: DiscreteLocation): void {
         if (DEBUG_CONSTANTS.LOG_VIEWPORT_EVENTS) {
-            console.log(`🖱️ Design connection clicked: ${ports.portA} ↔ ${ports.portB} at X${location.x}Y${location.y}`);
+            // Design connection click
         }
         // Could emit events or call external callbacks here
     }
@@ -541,7 +641,7 @@ export class FabricRenderer {
     // GETTERS
     // =============================================================================
 
-    public getCurrentGeometry(): FabricGeometry | null {
+    public getCurrentGeometry(): FabricDataShape | null {
         return this.currentGeometry;
     }
 
@@ -554,7 +654,7 @@ export class FabricRenderer {
     // =============================================================================
 
     public destroy(): void {
-        console.log('🧹 Destroying FabricRenderer and all managers');
+    // Destroying renderer
         
         // Destroy all managers
         this.viewportManager.destroy();
@@ -568,6 +668,6 @@ export class FabricRenderer {
         this.tileContainers = [];
         this.onViewportChangeCallback = undefined;
         
-        console.log('✅ FabricRenderer destroyed successfully');
+    // Destroy complete
     }
 }
