@@ -24,8 +24,12 @@ import { DesignRenderer } from './DesignRenderer';
 // Import constants
 import { 
     VIEWPORT_INITIAL_UPDATE_DELAY_MS,
-    DEBUG_CONSTANTS 
+    DEBUG_CONSTANTS,
+    PERFORMANCE_CONSTANTS 
 } from './FabricConstants';
+
+// Hard safety flag: disable cross-tile overlay to prevent startup crashes during investigation.
+const DISABLE_CROSS_TILE_OVERLAY = true;
 
 export class FabricRenderer {
     private app: Application;
@@ -79,6 +83,7 @@ export class FabricRenderer {
         this.viewportManager.setViewportChangeCallback((bounds, zoom) => {
             this.cullingLODManager.updateLOD();
             this.onViewportChangeCallback?.(bounds, zoom);
+            this.updateCrossTileBundleThickness();
         });
         
         // Set up tile renderer callbacks
@@ -123,64 +128,103 @@ export class FabricRenderer {
     // =============================================================================
 
     public loadFabric(geometry: FabricDataShape): void {
-        // Validate required serialized fields (strict mode)
-    const requiredKeys: (keyof FabricDataShape)[] = ['tiles','tileDict','wireDict','_subTileToTile'];
-        for (const k of requiredKeys) {
-            if ((geometry as any)[k] === undefined) {
-                throw new Error(`Serialized fabric missing required field: ${String(k)}`);
+        const t0 = performance.now();
+        try {
+            // Validate required serialized fields (strict mode)
+            const requiredKeys: (keyof FabricDataShape)[] = ['tiles','tileDict','wireDict','_subTileToTile'];
+            for (const k of requiredKeys) {
+                if ((geometry as any)[k] === undefined) { throw new Error(`Serialized fabric missing required field: ${String(k)}`); }
+            }
+            // Dimension validation
+            if (geometry.tiles.length !== geometry.numberOfRows) { throw new Error(`tiles length ${geometry.tiles.length} != numberOfRows ${geometry.numberOfRows}`); }
+            if (geometry.tiles.some(row => row.length !== geometry.numberOfColumns)) { throw new Error(`row length mismatch numberOfColumns ${geometry.numberOfColumns}`); }
+            this.currentGeometry = geometry;
+            this.clearFabric();
+
+        // Validate that every tile name appearing in tiles matrix has an entry in tileGeomMap
+        const missing = new Map<string, number>();
+        for (let r=0;r<geometry.numberOfRows;r++) {
+            for (let c=0;c<geometry.numberOfColumns;c++) {
+                const tName = geometry.tileNames[r][c];
+                if (!tName) { continue; }
+                if (!geometry.tileGeomMap[tName]) {
+                    missing.set(tName, (missing.get(tName)||0)+1);
+                }
             }
         }
-        // Dimension validation
-        if (geometry.tiles.length !== geometry.numberOfRows) {
-            throw new Error(`tiles length ${geometry.tiles.length} != numberOfRows ${geometry.numberOfRows}`);
-        }
-        if (geometry.tiles.some(row => row.length !== geometry.numberOfColumns)) {
-            throw new Error(`row length mismatch numberOfColumns ${geometry.numberOfColumns}`);
+        if (missing.size) {
+            console.warn("⚠️ Missing tile geometry definitions detected:", Array.from(missing.entries()));
+            // Create lightweight placeholder geometries so rendering does not crash
+            for (const [name] of missing.entries()) {
+                geometry.tileGeomMap[name] = {
+                    name,
+                    width: 40,
+                    height: 40,
+                    smGeometry: undefined as any,
+                    belGeometryList: [],
+                    wireGeometryList: [],
+                    lowLodWiresGeoms: [],
+                    lowLodOverlays: []
+                } as any;
+            }
         }
         
-        this.currentGeometry = geometry;
-        this.clearFabric();
-        
-        // Build fabric using TileRenderer
-        this.tileContainers = this.tileRenderer.buildFabric(geometry);
+            const tTilesStart = performance.now();
+            this.tileContainers = this.tileRenderer.buildFabric(geometry);
+            const tTilesEnd = performance.now();
 
-    // Build cross-tile wire overlay
-    this.buildCrossTileOverlay(geometry);
+            const tOverlayStart = performance.now();
+            this.buildCrossTileOverlay(geometry);
+            const tOverlayEnd = performance.now();
         
-        // Initialize culling and LOD system
-        this.cullingLODManager.initializeForGeometry(geometry, this.tileContainers);
-        this.designRenderer.initializeForGeometry(geometry, this.tileContainers);
+            this.cullingLODManager.initializeForGeometry(geometry, this.tileContainers);
+            this.designRenderer.initializeForGeometry(geometry, this.tileContainers);
         
-        // Center the fabric in viewport
-        this.centerFabric();
+            this.centerFabric();
         
-        // Ensure culling and LOD are properly initialized
-        setTimeout(() => {
-            this.cullingLODManager.updateLOD();
-            this.viewportManager.forceViewportUpdate();
-        }, VIEWPORT_INITIAL_UPDATE_DELAY_MS);
-        
-    // Successfully loaded
+            setTimeout(() => {
+                this.cullingLODManager.updateLOD();
+                this.viewportManager.forceViewportUpdate();
+            }, VIEWPORT_INITIAL_UPDATE_DELAY_MS);
+            const t1 = performance.now();
+            console.info(`Fabric load timing tiles=${(tTilesEnd-tTilesStart).toFixed(1)}ms overlay=${(tOverlayEnd-tOverlayStart).toFixed(1)}ms total=${(t1-t0).toFixed(1)}ms`);
+        } catch (e) {
+            console.error('Fabric load error', e);
+            this.currentGeometry = null;
+            throw e;
+        }
     }
 
     private buildCrossTileOverlay(geometry: FabricDataShape): void {
-        if (this.crossTileLayer) { this.crossTileLayer.destroy({ children: true }); }
-        this.crossTileLayer = new Container();
-        (this.crossTileLayer as any).userData = { type: 'crossTileLayer' };
-        this.fabricContainer.addChild(this.crossTileLayer);
+    if (DISABLE_CROSS_TILE_OVERLAY) { console.warn('Cross-tile overlay disabled (safe mode flag)'); return; }
+    if (this.crossTileLayer) { this.crossTileLayer.destroy({ children: true }); }
+    this.crossTileLayer = new Container();
+    (this.crossTileLayer as any).userData = { type: 'crossTileLayer' };
+    // Insert at index 0 so tiles render above bundles
+    this.fabricContainer.addChildAt(this.crossTileLayer, 0);
 
         // Use wireDict for richer aggregate cross-tile representation
         // wireDict keys like "(dx, dy)" contain array entries with wireCount and metadata
         // We'll aggregate per origin tile using relative offsets from geometry.tiles grid
-        const baseStroke = 0.6; // minimal thickness
+        const baseStroke = 0.6;
+        const totalTiles = geometry.numberOfRows * geometry.numberOfColumns;
+        const MAX_GLOBAL_BUNDLES = (PERFORMANCE_CONSTANTS as any)?.CROSS_TILE_MAX_GLOBAL_LINES || 4000;
+        const SKIP_THRESHOLD_TILES = 2500; // heuristic
+        if (totalTiles > SKIP_THRESHOLD_TILES) {
+            console.warn('Skipping cross-tile overlay (too many tiles)', { totalTiles });
+            return;
+        }
+        const bundleAccumulator: { start: {r:number;c:number}; target: {r:number;c:number}; dx:number; dy:number; total:number; sample:any[] }[] = [];
+        let globalBundles = 0;
+        // Pre-group per tile with per-tile line limits
         for (let r = 0; r < geometry.numberOfRows; r++) {
             for (let c = 0; c < geometry.numberOfColumns; c++) {
-                const tileType = geometry.tiles[r][c];
-                if (!tileType) { continue; }
                 const loc = geometry.tileLocations[r][c];
                 if (!loc) { continue; }
-                // Iterate over all possible deltas in wireDict to draw from this origin if relevant
+                let drawnForTile = 0;
+                if (drawnForTile >= PERFORMANCE_CONSTANTS.CROSS_TILE_MAX_LINES_PER_TILE) { continue; }
                 for (const deltaKey of Object.keys(geometry.wireDict)) {
+                    if (drawnForTile >= PERFORMANCE_CONSTANTS.CROSS_TILE_MAX_LINES_PER_TILE) { break; }
                     const match = deltaKey.match(/\(([-0-9]+),\s*([-0-9]+)\)/);
                     if (!match) { continue; }
                     const dx = parseInt(match[1], 10);
@@ -189,38 +233,74 @@ export class FabricRenderer {
                     const targetCol = c + dx;
                     if (targetRow < 0 || targetRow >= geometry.numberOfRows || targetCol < 0 || targetCol >= geometry.numberOfColumns) { continue; }
                     const entries: any[] = geometry.wireDict[deltaKey];
-                    if (!entries || entries.length === 0) { continue; }
-                    // Aggregate wireCount for stylistic width scaling
-                    let total = 0;
-                    for (const e of entries) { if (typeof e.wireCount === 'number') { total += e.wireCount; } }
-                    if (total === 0) { continue; }
-                    // Draw a single representative bundle line between tile centers (or improved edge mapping)
-                    const targetLoc = geometry.tileLocations[targetRow][targetCol];
-                    if (!targetLoc) { continue; }
-                    const startX = loc.x + (geometry.tileGeomMap[geometry.tileNames[r][c] || '']?.width || 0) / 2;
-                    const startY = loc.y + (geometry.tileGeomMap[geometry.tileNames[r][c] || '']?.height || 0) / 2;
-                    const endX = targetLoc.x + (geometry.tileGeomMap[geometry.tileNames[targetRow][targetCol] || '']?.width || 0) / 2;
-                    const endY = targetLoc.y + (geometry.tileGeomMap[geometry.tileNames[targetRow][targetCol] || '']?.height || 0) / 2;
-                    const g = new Graphics();
-                    g.moveTo(startX, startY);
-                    g.lineTo(endX, endY);
-                    // Width scaling: logarithmic for large counts to prevent overpowering
-                    const width = baseStroke + Math.log10(total + 1) * 1.2;
-                    g.stroke({ width, color: 0xffa500, alpha: 0.35 });
-                    const startTileName = geometry.tileNames[r][c];
-                    const endTileName = geometry.tileNames[targetRow][targetCol];
-                    (g as any).userData = { type: 'crossTileWireBundle', totalWireCount: total, dx, dy, entries, startTileName, endTileName };
-                    g.eventMode = 'static';
-                    g.cursor = 'pointer';
-                    g.on('pointerover', (ev: any) => this.showWireTooltip(ev.global.x, ev.global.y, g));
-                    g.on('pointermove', (ev: any) => this.moveTooltip(ev.global.x, ev.global.y));
-                    g.on('pointerout', () => this.hideTooltip());
-                    this.crossTileLayer.addChild(g);
+                    if (!entries || !entries.length) { continue; }
+                    let total = 0; for (const e of entries) { if (typeof e.wireCount === 'number') { total += e.wireCount; } }
+                    if (!total) { continue; }
+                    if (globalBundles < MAX_GLOBAL_BUNDLES) {
+                        bundleAccumulator.push({ start: {r,c}, target: {r:targetRow,c:targetCol}, dx, dy, total, sample: entries.slice(0, PERFORMANCE_CONSTANTS.CROSS_TILE_GROUP_SAMPLE_LIMIT) });
+                        drawnForTile++;
+                        globalBundles++;
+                    }
                 }
+                if (globalBundles >= MAX_GLOBAL_BUNDLES) { break; }
             }
+            if (globalBundles >= MAX_GLOBAL_BUNDLES) { break; }
+        }
+        // Draw bundles
+        console.info(`Cross-tile bundles drawn: ${bundleAccumulator.length}`);
+    for (const bundle of bundleAccumulator) {
+            const { start, target, dx, dy, total, sample } = bundle;
+            const loc = geometry.tileLocations[start.r][start.c];
+            const targetLoc = geometry.tileLocations[target.r][target.c];
+            if (!loc || !targetLoc) { continue; }
+            const startName = geometry.tileNames[start.r][start.c];
+            const targetName = geometry.tileNames[target.r][target.c];
+            const startGeom = startName ? geometry.tileGeomMap[startName] : undefined;
+            const targetGeom = targetName ? geometry.tileGeomMap[targetName] : undefined;
+            if (!startGeom || !targetGeom) { continue; }
+            const tileW = startGeom.width ?? 0;
+            const tileH = startGeom.height ?? 0;
+            const tgtW = targetGeom.width ?? 0;
+            const tgtH = targetGeom.height ?? 0;
+            const startX = loc.x + (dx > 0 ? tileW : dx < 0 ? 0 : tileW / 2);
+            const startY = loc.y + (dy > 0 ? tileH : dy < 0 ? 0 : tileH / 2);
+            const endX = targetLoc.x + (dx > 0 ? 0 : dx < 0 ? tgtW : tgtW / 2);
+            const endY = targetLoc.y + (dy > 0 ? 0 : dy < 0 ? tgtH : tgtH / 2);
+            const g = new Graphics();
+            const pathPoints: {x:number,y:number}[] = [];
+            if (startX === endX || startY === endY) {
+                pathPoints.push({x:startX,y:startY},{x:endX,y:endY});
+            } else {
+                const midX = startX + (endX - startX) * 0.5;
+                pathPoints.push({x:startX,y:startY},{x:midX,y:startY},{x:midX,y:endY},{x:endX,y:endY});
+            }
+            g.moveTo(pathPoints[0].x, pathPoints[0].y);
+            for (let i=1;i<pathPoints.length;i++){ g.lineTo(pathPoints[i].x, pathPoints[i].y); }
+            const rawWidth = baseStroke + Math.log10(total + 1) * 1.0;
+            g.stroke({ width: rawWidth, color: 0xffa500, alpha: 0.18 });
+            const startTileName = geometry.tileNames[start.r][start.c];
+            const endTileName = geometry.tileNames[target.r][target.c];
+            (g as any).userData = { 
+                type: 'crossTileWireBundle', 
+                totalWireCount: total, 
+                dx, dy, 
+                entries: sample, 
+                startTileName, endTileName,
+                baseWidth: rawWidth,
+                compression: total / sample.length,
+                sampleNames: sample.map(e => e.name || e.id || `${dx},${dy}`)
+            };
+            (g as any).originalPathPoints = pathPoints;
+            g.eventMode = 'static'; g.cursor = 'pointer';
+            g.on('pointerover', (ev: any) => this.showWireTooltip(ev.global.x, ev.global.y, g));
+            g.on('pointermove', (ev: any) => this.moveTooltip(ev.global.x, ev.global.y));
+            g.on('pointerout', () => this.hideTooltip());
+            this.crossTileLayer.addChild(g);
         }
         // Put design overlay above cross-tile wires
         this.fabricContainer.setChildIndex(this.crossTileLayer, 0);
+        // After creation, update dynamic thickness based on current zoom
+        this.updateCrossTileBundleThickness();
     }
 
     // =============================================================================
@@ -256,12 +336,11 @@ export class FabricRenderer {
         this.ensureTooltipText();
         const data = (g as any).userData;
         const lines: string[] = [];
-        lines.push(`Bundle`);
-        if (data.startTileName && data.endTileName) {
-            lines.push(`${data.startTileName} → ${data.endTileName}`);
-        }
-        if (typeof data.totalWireCount === 'number') {
-            lines.push(`Wires: ${data.totalWireCount}`);
+        lines.push(`Bundle ${data.startTileName || ''}→${data.endTileName || ''}`.trim());
+        if (typeof data.totalWireCount === 'number') { lines.push(`Total wires: ${data.totalWireCount}`); }
+        if (data.compression && data.compression > 1) { lines.push(`Compression: ${data.compression.toFixed(1)}x`); }
+        if (Array.isArray(data.sampleNames) && data.sampleNames.length) {
+            lines.push(`Sample: ${data.sampleNames.slice(0,4).join(', ')}${data.sampleNames.length>4?'…':''}`);
         }
         // Upstream / downstream endpoints: treat start as upstream, end as downstream.
         const text = lines.join('\n');
@@ -282,6 +361,27 @@ export class FabricRenderer {
         if (!this.tooltip || !this.tooltip.container.visible) { return; }
         this.tooltip.container.x = x + 12;
         this.tooltip.container.y = y + 12;
+    }
+
+    private updateCrossTileBundleThickness() {
+        if (!this.crossTileLayer) { return; }
+        const zoom = this.viewportManager.getViewport().scale.x || 1;
+        for (const child of this.crossTileLayer.children) {
+            const anyChild: any = child as any;
+            if (!anyChild.userData || anyChild.userData.type !== 'crossTileWireBundle') { continue; }
+            const g = child as Graphics;
+            const baseWidth = anyChild.userData.baseWidth || 0.6;
+            // Dynamic scaling: sqrt(zoom) to moderate growth; clamp
+            const scaled = Math.min(4, Math.max(0.2, baseWidth * Math.sqrt(zoom)));
+            // Redraw path with new stroke width (reconstruct by reading geometry commands is non-trivial; we simply overdraw by clearing) 
+            // For simplicity store original points? If not stored, skip.
+            if (!anyChild.originalPathPoints) { continue; }
+            g.clear();
+            const pts: {x:number,y:number}[] = anyChild.originalPathPoints;
+            g.moveTo(pts[0].x, pts[0].y);
+            for (let i=1;i<pts.length;i++){ g.lineTo(pts[i].x, pts[i].y); }
+            g.stroke({ width: scaled, color: 0xffa500, alpha: 0.18 });
+        }
     }
 
     private hideTooltip() {

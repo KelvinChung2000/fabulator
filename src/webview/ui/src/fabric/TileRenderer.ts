@@ -25,7 +25,8 @@ import {
     TILE_COLOR_CONSTANTS,
     INTERACTION_CONSTANTS,
     simpleHash,
-    hslToHex
+    hslToHex,
+    PERFORMANCE_CONSTANTS
 } from './FabricConstants';
 
 export type TileClickCallback = (tileGeometry: TileGeometry, x: number, y: number) => void;
@@ -65,12 +66,21 @@ export class TileRenderer {
         
         // Create all tiles
         const tileGeomMapAny: any = geometry.tileGeomMap as any; // allow object or Map-like
+        const safeGetTile = (name: any): TileGeometry | undefined => {
+            if (!name) { return undefined; }
+            const mapObj: any = tileGeomMapAny as any;
+            const tg = tileGeomMapAny instanceof Map ? tileGeomMapAny.get(String(name)) : mapObj[String(name)];
+            if (!tg) {
+                console.warn(`⚠️ Missing tile geometry for name '${name}'. Keys sample:`, tileGeomMapAny instanceof Map ? Array.from(tileGeomMapAny.keys()).slice(0,20) : Object.keys(mapObj).slice(0,20));
+            }
+            return tg;
+        };
         for (let y = 0; y < geometry.numberOfRows; y++) {
             for (let x = 0; x < geometry.numberOfColumns; x++) {
                 const tileName = geometry.tileNames[y][x];
                 const mapObj: any = tileGeomMapAny as any;
                 const key = String(tileName);
-                const tileGeometry = tileGeomMapAny instanceof Map ? tileGeomMapAny.get(key) : mapObj[key];
+                const tileGeometry = safeGetTile(key);
                 const location = geometry.tileLocations[y][x];
 
                 if (!tileGeometry) {
@@ -129,19 +139,55 @@ export class TileRenderer {
 
         // Create switch matrix if present
         if (tileGeometry.smGeometry) {
-            // Creating switch matrix for tile
             this.createSwitchMatrix(tileGeometry.smGeometry, tileContainer);
             this.createLowLodSubstitute(tileGeometry.smGeometry, tileContainer);
         }
 
-        // Create BELs
+        // Reposition BELs to right-hand side (Java parity) before drawing
+        const BEL_RIGHT_MARGIN = 6;
+        // Adaptive vertical compression if BEL count large
+        const bels = tileGeometry.belGeometryList;
+    const availableTop = 8;
+    const availableBottom = tileGeometry.height - 8;
+    const availableHeight = Math.max(0, availableBottom - availableTop);
+    const sm = tileGeometry.smGeometry;
+    const smRight = sm ? sm.relX + sm.width : 0;
+    // Choose BEL side: if SM is left half, put BELs on right; else put on left.
+    const placeOnRight = !sm || smRight < tileGeometry.width / 2;
+    const belColumnX = placeOnRight ? (tileGeometry.width - BEL_CONSTANTS.STROKE_WIDTH - (bels[0]?.width || 40) - 6) : 6;
+        if (bels.length) {
+            // Compute total nominal height
+            const totalHeight = bels.length * bels[0].height;
+            let gap = 4;
+            if (totalHeight + gap * (bels.length - 1) > availableHeight) {
+                // Scale BEL heights proportionally
+                const scale = availableHeight / (totalHeight + gap * (bels.length - 1));
+                bels.forEach(b => { b.height = Math.max(6, b.height * scale); });
+            }
+            // Re-evaluate gap if still overflowing
+            const adjustedTotal = bels.reduce((acc,b)=>acc + b.height,0);
+            gap = Math.max(2, (availableHeight - adjustedTotal) / (bels.length + 1));
+            let cursorY = availableTop + gap;
+            bels.forEach(b => {
+                b.relY = Math.min(cursorY, tileGeometry.height - b.height - 4);
+                b.relX = Math.max(2, Math.min(tileGeometry.width - b.width - 2, belColumnX));
+                cursorY += b.height + gap;
+                // Adjust ports to maintain center
+                if (b.portGeometryList) {
+                    b.portGeometryList.forEach(p => { p.relY = b.height / 2; });
+                }
+            });
+        }
+
+        // Create BELs (now at adjusted positions)
         for (const belGeometry of tileGeometry.belGeometryList) {
             this.createBel(belGeometry, tileContainer);
         }
 
-        // Create internal wires (BEL-to-port connections) using batching for performance
-        if (tileGeometry.wireGeometryList && tileGeometry.wireGeometryList.length) {
-            this.createInternalWireBatch(tileGeometry.wireGeometryList, tileContainer);
+        // (Re)generate internal wires if missing or original geometry became invalid due to BEL relocation
+        const internalWires = this.generateInternalWires(tileGeometry);
+        if (internalWires.length) {
+            this.createInternalWireBatch(internalWires, tileContainer);
         }
 
         // Create low-LOD wire substitutes
@@ -310,7 +356,23 @@ export class TileRenderer {
             console.log(`    - Using ${smGeometry.switchMatrixWires.length} parsed switch matrix wires`);
         }
 
-        const WIRES = smGeometry.switchMatrixWires;
+        let WIRES = smGeometry.switchMatrixWires;
+        const MAX_INLINE = PERFORMANCE_CONSTANTS.MAX_SWITCH_MATRIX_WIRES_INLINE;
+        if (WIRES.length > MAX_INLINE && RENDER_MODES.SIMPLIFIED_SM_DIRECT) {
+            // Bundle: group by (sourcePort,destPort) first letter buckets to reduce line count
+            const grouped: { [k: string]: { src: string; dst: string; count: number } } = {};
+            for (const w of WIRES) {
+                const key = `${w.sourcePort[0]}-${w.destPort[0]}`;
+                if (!grouped[key]) { grouped[key] = { src: w.sourcePort, dst: w.destPort, count: 0 }; }
+                grouped[key].count++;
+            }
+            WIRES = Object.values(grouped).slice(0, PERFORMANCE_CONSTANTS.MAX_SM_WIRES_PER_GROUP).map(g => ({
+                name: `${g.src}->${g.dst}_bundle_${g.count}`,
+                sourcePort: g.src,
+                destPort: g.dst,
+                path: [] as Location[]
+            } as SwitchMatrixWireGeometry));
+        }
         console.log(`    - Creating ${WIRES.length} visual wire representations...`);
 
         // Simplified mode: straight gray connections for clarity
@@ -387,31 +449,45 @@ export class TileRenderer {
             
             console.log(`    📍 Port groups: Left=${leftPorts.length}, Right=${rightPorts.length}, Top=${topPorts.length}, Bottom=${bottomPorts.length}`);
             
-            // Create horizontal connections (left to right)
-            const maxHorizontal = Math.min(leftPorts.length, rightPorts.length, 3);
+            // Create horizontal connections (left to right) with distinct lane midpoints
+            const maxHorizontal = Math.min(leftPorts.length, rightPorts.length, 4);
             for (let i = 0; i < maxHorizontal; i++) {
-                if (leftPorts[i] && rightPorts[i]) {
-                    const wire: SwitchMatrixWireGeometry = {
-                        name: `sm_horizontal_${leftPorts[i].name}_to_${rightPorts[i].name}`,
-                        sourcePort: leftPorts[i].name,
-                        destPort: rightPorts[i].name,
-                        path: [] // Will be calculated by routing logic
-                    };
-                    wires.push(wire);
+                const lp = leftPorts[i];
+                const rp = rightPorts[i];
+                if (lp && rp) {
+                    const midY = Math.round(smGeometry.height * ((i + 1) / (maxHorizontal + 1)));
+                    wires.push({
+                        name: `sm_horizontal_${lp.name}_to_${rp.name}`,
+                        sourcePort: lp.name,
+                        destPort: rp.name,
+                        path: [
+                            { x: lp.relX, y: lp.relY },
+                            { x: lp.relX + 6, y: midY },
+                            { x: rp.relX - 6, y: midY },
+                            { x: rp.relX, y: rp.relY }
+                        ]
+                    });
                 }
             }
-            
-            // Create vertical connections (top to bottom)  
-            const maxVertical = Math.min(topPorts.length, bottomPorts.length, 3);
+
+            // Vertical connections (top to bottom) with distinct lane midpoints
+            const maxVertical = Math.min(topPorts.length, bottomPorts.length, 4);
             for (let i = 0; i < maxVertical; i++) {
-                if (topPorts[i] && bottomPorts[i]) {
-                    const wire: SwitchMatrixWireGeometry = {
-                        name: `sm_vertical_${topPorts[i].name}_to_${bottomPorts[i].name}`,
-                        sourcePort: topPorts[i].name,
-                        destPort: bottomPorts[i].name,
-                        path: [] // Will be calculated by routing logic
-                    };
-                    wires.push(wire);
+                const tp = topPorts[i];
+                const bp = bottomPorts[i];
+                if (tp && bp) {
+                    const midX = Math.round(smGeometry.width * ((i + 1) / (maxVertical + 1)));
+                    wires.push({
+                        name: `sm_vertical_${tp.name}_to_${bp.name}`,
+                        sourcePort: tp.name,
+                        destPort: bp.name,
+                        path: [
+                            { x: tp.relX, y: tp.relY },
+                            { x: midX, y: tp.relY + 6 },
+                            { x: midX, y: bp.relY - 6 },
+                            { x: bp.relX, y: bp.relY }
+                        ]
+                    });
                 }
             }
             
@@ -421,14 +497,20 @@ export class TileRenderer {
                 for (let i = 0; i < Math.min(2, allPorts.length - 2); i++) {
                     const sourcePort = allPorts[i];
                     const destPort = allPorts[i + 2];
-                    
-                    const wire: SwitchMatrixWireGeometry = {
+                    const midX = Math.round((sourcePort.relX + destPort.relX) / 2);
+                    const midY = Math.round((sourcePort.relY + destPort.relY) / 2);
+                    wires.push({
                         name: `sm_cross_${sourcePort.name}_to_${destPort.name}`,
                         sourcePort: sourcePort.name,
                         destPort: destPort.name,
-                        path: [] // Will be calculated by routing logic
-                    };
-                    wires.push(wire);
+                        path: [
+                            { x: sourcePort.relX, y: sourcePort.relY },
+                            { x: midX, y: sourcePort.relY },
+                            { x: midX, y: midY },
+                            { x: destPort.relX, y: midY },
+                            { x: destPort.relX, y: destPort.relY }
+                        ]
+                    });
                     console.log(`    ➕ Added cross wire: ${sourcePort.name} → ${destPort.name}`);
                 }
             }
@@ -441,14 +523,20 @@ export class TileRenderer {
                     for (let j = i + 1; j < Math.min(3, allPorts.length); j++) {
                         const sourcePort = allPorts[i];
                         const destPort = allPorts[j];
-                        
-                        const wire: SwitchMatrixWireGeometry = {
+                        const midX = Math.round((sourcePort.relX + destPort.relX) / 2);
+                        const midY = Math.round((sourcePort.relY + destPort.relY) / 2);
+                        wires.push({
                             name: `sm_debug_${sourcePort.name}_to_${destPort.name}`,
                             sourcePort: sourcePort.name,
                             destPort: destPort.name,
-                            path: [] // Will be calculated by routing logic
-                        };
-                        wires.push(wire);
+                            path: [
+                                { x: sourcePort.relX, y: sourcePort.relY },
+                                { x: midX, y: sourcePort.relY },
+                                { x: midX, y: midY },
+                                { x: destPort.relX, y: midY },
+                                { x: destPort.relX, y: destPort.relY }
+                            ]
+                        });
                         console.log(`    🔬 Added debug wire: ${sourcePort.name} → ${destPort.name}`);
                     }
                 }
@@ -785,14 +873,7 @@ export class TileRenderer {
 
         tileContainer.addChild(batchGraphics);
 
-        if (hasBelBounds) {
-            // Apply a mask so internal wires do not extend outside BEL(s)
-            const mask = new Graphics();
-            mask.rect(belBounds.x, belBounds.y, belBounds.right - belBounds.x, belBounds.bottom - belBounds.y);
-            mask.fill({ color: 0xffffff, alpha: 1 });
-            tileContainer.addChild(mask);
-            batchGraphics.mask = mask;
-        }
+    // Removed masking: allow internal wires to traverse between BELs and Switch Matrix.
     }
 
     private drawWirePath(wireGraphics: Graphics, wireGeometry: WireGeometry, thickness: number): void {
@@ -1231,5 +1312,57 @@ export class TileRenderer {
         this.clearFabric();
         this.currentGeometry = null;
         this.tileContainers = [];
+    }
+
+    // =============================================================================
+    // INTERNAL WIRE GENERATION (post-BEL relayout)
+    // =============================================================================
+
+    private generateInternalWires(tileGeometry: TileGeometry): WireGeometry[] {
+        const wires: WireGeometry[] = [];
+        if (!tileGeometry.smGeometry || !tileGeometry.belGeometryList.length) { return wires; }
+    const sm = tileGeometry.smGeometry;
+    const smRight = sm.relX + sm.width;
+    const placeOnRight = smRight < tileGeometry.width / 2; // mirrors earlier BEL placement decision
+        // Define routing channels between BEL column (right) and SM area (left)
+    const channelStartX = placeOnRight ? (sm.relX + sm.width + 4) : (sm.relX - 8);
+    const exitX = sm.relX + Math.round(sm.width * (placeOnRight ? 0.35 : 0.65));
+        const baseYOffset = sm.relY + 8;
+        const lanes = tileGeometry.belGeometryList.length;
+        const usableHeight = sm.height - 16;
+        // If more BELs than lanes within SM, allow sharing by grouping
+        const lanePositions: number[] = [];
+        const laneCount = Math.min(lanes, Math.max(4, Math.floor(usableHeight / 10)));
+        for (let i = 0; i < laneCount; i++) {
+            lanePositions.push(baseYOffset + (usableHeight / (laneCount + 1)) * (i + 1));
+        }
+        tileGeometry.belGeometryList.forEach((bel, idx) => {
+            const belCenter = { x: bel.relX + bel.width * 0.5, y: bel.relY + bel.height * 0.5 };
+            const laneY = lanePositions[idx % lanePositions.length];
+            // Route steps:
+            // 1. Horizontal from BEL center partway toward SM (stagingX)
+            // 2. Vertical to laneY
+            // 3. Horizontal into SM (exitX)
+            const path: {x:number,y:number}[] = [];
+            path.push(belCenter);
+            const stagingX = placeOnRight ? belCenter.x - 12 : belCenter.x + 12;
+            path.push({ x: stagingX, y: belCenter.y });
+            // Vertical to lane level
+            if (Math.abs(belCenter.y - laneY) > 0.5) {
+                path.push({ x: stagingX, y: laneY });
+            }
+            // Horizontal into SM
+            path.push({ x: exitX, y: laneY });
+            wires.push({ name: `${bel.name}_to_SM`, path });
+        });
+        return wires;
+    }
+
+    private manhattanPath(a: {x:number,y:number}, b: {x:number,y:number}): {x:number,y:number}[] {
+        if (a.x === b.x || a.y === b.y) { return [a,b]; }
+        const dx = Math.abs(b.x - a.x);
+        const dy = Math.abs(b.y - a.y);
+        if (dx < dy) { return [a, { x: a.x, y: b.y }, b]; }
+        return [a, { x: b.x, y: a.y }, b];
     }
 }

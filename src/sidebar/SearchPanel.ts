@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { getNonce } from '../webview/utilities/getNonce';
 
 export class SearchPanel implements vscode.WebviewViewProvider {
     public static readonly viewType = 'fabulator.searchPanel';
@@ -251,11 +252,3 @@ export class SearchPanel implements vscode.WebviewViewProvider {
     }
 }
 
-function getNonce() {
-    let text = '';
-    const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    for (let i = 0; i < 32; i++) {
-        text += possible.charAt(Math.floor(Math.random() * possible.length));
-    }
-    return text;
-}

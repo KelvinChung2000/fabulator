@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { FabricGeometry, TileGeometry, BelGeometry, SwitchMatrixGeometry, PortGeometry, WireGeometry } from '../types/geometry';
 import { DesignData, ConnectedPorts } from '../webview/ui/src/types/design';
-import { GeometryParser } from '../parsers/GeometryParser';
+// GeometryParser removed - using direct JSON parsing now
 import { FasmParser } from '../parsers/FasmParser';
 
 // Tree item types for filtering and context menus
@@ -100,12 +100,14 @@ export class FabricExplorerProvider implements vscode.TreeDataProvider<FabricEle
     async loadFabricFile(filePath: string): Promise<void> {
         try {
             this.currentFabricFile = filePath;
-            const parser = new GeometryParser(filePath);
-            this.currentGeometry = await parser.parse();
+            // TODO: Update sidebar to work with new JSON format and FabricData
+            // For now, disable geometry loading in sidebar until we implement
+            // proper integration with the new upstream JSON format
+            this.currentGeometry = null;
             this.buildTreeData();
             this.refresh();
 
-            vscode.window.showInformationMessage(`Loaded fabric: ${path.basename(filePath)}`);
+            vscode.window.showInformationMessage(`Loaded fabric: ${path.basename(filePath)} (sidebar integration pending)`);
         } catch (error) {
             vscode.window.showErrorMessage(`Failed to load fabric file: ${error}`);
             console.error('Error loading fabric file:', error);

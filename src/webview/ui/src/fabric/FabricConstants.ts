@@ -176,7 +176,14 @@ export const PERFORMANCE_CONSTANTS = {
     BATCH_SIZE: 50,               // Number of tiles to process per batch
     RENDER_THROTTLE_MS: 16,       // Minimum time between render updates
     MEMORY_CLEANUP_INTERVAL_MS: 5000, // Memory cleanup interval
-    HASH_MULTIPLIER: 31           // Simple hash function multiplier
+    HASH_MULTIPLIER: 31,          // Simple hash function multiplier
+    // Adaptive rendering thresholds
+    MAX_BELS_PER_TILE_BEFORE_COMPACT: 18,
+    COMPACT_BEL_MIN_GAP: 2,
+    MAX_SWITCH_MATRIX_WIRES_INLINE: 250,
+    MAX_SM_WIRES_PER_GROUP: 400,
+    CROSS_TILE_MAX_LINES_PER_TILE: 40,
+    CROSS_TILE_GROUP_SAMPLE_LIMIT: 12
 };
 
 // =============================================================================

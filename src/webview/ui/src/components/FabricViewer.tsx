@@ -86,16 +86,16 @@ const FabricViewer: React.FC<FabricViewerProps> = ({ onMessage }) => {
             antialias: false,
             resolution: 1,
             autoDensity: false,
-            preference: 'webgpu' as const, // Try WebGPU if available
+            preference: 'webgl' as const, // Fallback to WebGL, not WebGPU
             powerPreference: 'low-power' as const,
             failIfMajorPerformanceCaveat: false
           }
 
           try {
             await app.init(canvasOptions)
-            console.log('PixiJS initialized with WebGPU fallback')
-          } catch (webgpuError) {
-            console.warn('WebGPU failed, using final canvas fallback:', webgpuError)
+            console.log('PixiJS initialized with WebGL fallback')
+          } catch (webglError2) {
+            console.warn('WebGL failed, using final canvas fallback:', webglError2)
 
             // Final fallback to basic canvas
             const basicOptions = {
