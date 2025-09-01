@@ -73,47 +73,47 @@ export const WIRE_CONSTANTS = {
 
 /** Port rendering constants */
 export const PORT_CONSTANTS = {
-    RADIUS: 2,                    // Port circle radius
-    FILL_COLOR: 0x00FF00,         // Green fill for ports
+    RADIUS: 1.5,                  // Port circle radius
+    FILL_COLOR: 0x2E8B57,         // SeaGreen, a more subtle green
     STROKE_COLOR: 0xFFFFFF,       // White stroke for ports
-    STROKE_WIDTH: 1,              // Port stroke width
-    ALPHA: 0.8                    // Port transparency
+    STROKE_WIDTH: 0.5,            // Port stroke width
+    ALPHA: 0.9                    // Port transparency
 };
 
 /** BEL rendering constants */
 export const BEL_CONSTANTS = {
-    STROKE_COLOR: 0x888888,       // Gray stroke for BELs
-    STROKE_WIDTH: 1,              // BEL stroke width
-    FILL_ALPHA: 0.3,              // BEL fill transparency
-    STROKE_ALPHA: 0.8             // BEL stroke transparency
+    STROKE_COLOR: 0xAAAAAA,       // Lighter gray stroke for BELs
+    STROKE_WIDTH: 0.75,           // BEL stroke width
+    FILL_ALPHA: 0.2,              // BEL fill transparency
+    STROKE_ALPHA: 0.9             // BEL stroke transparency
 };
 
 /** Switch Matrix rendering constants */
 export const SWITCH_MATRIX_CONSTANTS = {
     STROKE_COLOR: 0xFFFFFF,       // White stroke
-    STROKE_WIDTH: 1,              // Switch matrix stroke width
-    FILL_COLOR: 0x000000,         // Black fill
-    FILL_ALPHA: 0.8,              // Fill transparency
-    CORNER_RADIUS: 6,             // Rounded corner radius
-    LOW_LOD_FILL_COLOR: 0x000000, // Low LOD fill color
+    STROKE_WIDTH: 0.75,           // Switch matrix stroke width
+    FILL_COLOR: 0x1A1A1A,         // Slightly lighter black fill
+    FILL_ALPHA: 0.85,             // Fill transparency
+    CORNER_RADIUS: 4,             // Rounded corner radius
+    LOW_LOD_FILL_COLOR: 0x1A1A1A, // Low LOD fill color
     LOW_LOD_STROKE_COLOR: 0xFFFFFF // Low LOD stroke color
 };
 
 /** Switch Matrix Wire rendering constants */
 export const SWITCH_MATRIX_WIRE_CONSTANTS = {
-    DEFAULT_COLOR: 0x4A9EFF,      // Slightly more muted blue for better blending
-    DEFAULT_WIDTH: 0.8,           // Slightly thicker for better visibility
-    DEFAULT_ALPHA: 1.0,           // Full alpha - LOD system will control transparency
-    HIGHLIGHTED_COLOR: 0xFF6600,  // Orange for highlighted switch matrix wires
-    HIGHLIGHTED_WIDTH: 1.2,       // Thicker when highlighted
-    MIN_WIDTH: 0.55,              // Minimum wire width at low zoom
-    MAX_WIDTH: 1.5,               // Maximum wire width at high zoom
-    LOD_THICKNESS_MULTIPLIER: 2.0 // Wire thickness scaling factor for LOD
+    DEFAULT_COLOR: 0x87CEEB,      // SkyBlue, a softer blue
+    DEFAULT_WIDTH: 1.2,           // Slightly thicker for better visibility with curves
+    DEFAULT_ALPHA: 0.85,          // Slightly transparent for better blending
+    HIGHLIGHTED_COLOR: 0xFF8C00,  // DarkOrange for highlighted wires
+    HIGHLIGHTED_WIDTH: 1.8,       // Thicker when highlighted
+    MIN_WIDTH: 0.6,               // Minimum wire width at low zoom
+    MAX_WIDTH: 2.0,               // Maximum wire width at high zoom
+    LOD_THICKNESS_MULTIPLIER: 1.5 // Wire thickness scaling factor for LOD
 };
 
 // Simplified rendering mode: draw SM connections as straight, faint gray lines
 export const RENDER_MODES = {
-    SIMPLIFIED_SM_DIRECT: true
+    SIMPLIFIED_SM_DIRECT: false
 };
 
 export const SM_DIRECT_WIRE_STYLE = {

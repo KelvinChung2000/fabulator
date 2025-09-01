@@ -630,92 +630,50 @@ export class TileRenderer {
     }
 
     private calculateSwitchMatrixRoutingPath(sourcePort: PortGeometry, destPort: PortGeometry, smGeometry: SwitchMatrixGeometry): Location[] {
-        // Implement Java-like smart routing logic with bias towards Manhattan paths for clarity
-        const BORDER_INSET = 2; // px inset to keep wires off the SM border stroke
-        const clampIn = (v: number, min: number, max: number) => Math.max(min, Math.min(max, v));
-        const insetPoint = (pt: {x:number,y:number}) => ({
-            x: clampIn(pt.x, BORDER_INSET, Math.max(BORDER_INSET, smGeometry.width - BORDER_INSET)),
-            y: clampIn(pt.y, BORDER_INSET, Math.max(BORDER_INSET, smGeometry.height - BORDER_INSET))
-        });
-        const sourceLocation = insetPoint({ x: sourcePort.relX, y: sourcePort.relY });
-        const destLocation = insetPoint({ x: destPort.relX, y: destPort.relY });
-        
-        console.log(`        🧮 Calculating routing from (${sourceLocation.x},${sourceLocation.y}) to (${destLocation.x},${destLocation.y})`);
-        console.log(`        🔲 Switch matrix size: ${smGeometry.width}x${smGeometry.height}`);
-        
-        // Check if ports are aligned or on borders (matches Java logic)
-        const xEqual = sourceLocation.x === destLocation.x;
-        const yEqual = sourceLocation.y === destLocation.y;
-        
-        const atLeftOrRightBorder = sourceLocation.x === 0 || sourceLocation.x === smGeometry.width ||
-                                   destLocation.x === 0 || destLocation.x === smGeometry.width;
-        const atTopOrBottomBorder = sourceLocation.y === 0 || sourceLocation.y === smGeometry.height ||
-                                   destLocation.y === 0 || destLocation.y === smGeometry.height;
-        
-        console.log(`        ✅ Alignment: xEqual=${xEqual}, yEqual=${yEqual}`);
-        console.log(`        🏗️  Borders: leftRight=${atLeftOrRightBorder}, topBottom=${atTopOrBottomBorder}`);
-        
-        // Decide whether to draw a curved path or straight line
-        const drawCurve = !xEqual && !yEqual && (atLeftOrRightBorder || atTopOrBottomBorder);
-        console.log(`        🎯 Decision: drawCurve=${drawCurve}`);
-        
-    // Prefer Manhattan path unless strictly aligned to minimize diagonal clutter
-        const preferManhattan = !(sourceLocation.x === destLocation.x || sourceLocation.y === destLocation.y);
-        if (preferManhattan) {
-            // Choose L-shaped route using smaller delta first
-            const dx = Math.abs(destLocation.x - sourceLocation.x);
-            const dy = Math.abs(destLocation.y - sourceLocation.y);
-            const lanes = 7; // odd number to keep a centered lane
-            const laneSpacing = 2; // px
-            const hash = (s: string) => {
-                let h = 0; for (let i = 0; i < s.length; i++) { h = ((h << 5) - h) + s.charCodeAt(i); h |= 0; }
-                return Math.abs(h);
-            };
-            const laneIndex = (hash(sourcePort.name + '->' + destPort.name) % lanes) - Math.floor(lanes/2);
-            const offset = laneIndex * laneSpacing;
+        const sourceLocation = { x: sourcePort.relX, y: sourcePort.relY };
+        const destLocation = { x: destPort.relX, y: destPort.relY };
 
-            if (dx <= dy) {
-                // Vertical then horizontal: elbow at (sx, dy)
-                const elbow = { x: sourceLocation.x, y: destLocation.y };
-                // Offset elbow horizontally to separate parallel bundles
-                const elbowOffset = {
-                    x: Math.max(1, Math.min(smGeometry.width - 1, elbow.x + offset)),
-                    y: elbow.y
-                };
-                return [sourceLocation, elbowOffset, destLocation];
-            } else {
-                // Horizontal then vertical: elbow at (dx, sy)
-                const elbow = { x: destLocation.x, y: sourceLocation.y };
-                // Offset elbow vertically to separate parallel bundles
-                const elbowOffset = {
-                    x: elbow.x,
-                    y: Math.max(1, Math.min(smGeometry.height - 1, elbow.y + offset))
-                };
-                return [sourceLocation, elbowOffset, destLocation];
-            }
-        }
-        // Simple direct connection when aligned
-        return [sourceLocation, destLocation];
+        const midX = (sourceLocation.x + destLocation.x) / 2;
+        const midY = (sourceLocation.y + destLocation.y) / 2;
+
+        // Introduce a control point to create a curve
+        // The control point is offset from the midpoint, perpendicular to the line connecting the source and destination
+        const dx = destLocation.x - sourceLocation.x;
+        const dy = destLocation.y - sourceLocation.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        
+        // Normalized perpendicular vector
+        const offsetX = -dy / dist;
+        const offsetY = dx / dist;
+
+        // The "bend" of the curve, proportional to the distance
+        const curveFactor = dist * 0.2;
+
+        const controlPoint = {
+            x: midX + offsetX * curveFactor,
+            y: midY + offsetY * curveFactor
+        };
+
+        // Return the start, control, and end points for a quadratic curve
+        return [sourceLocation, controlPoint, destLocation];
     }
 
     private drawSwitchMatrixWireRoutingPath(wireGraphics: Graphics, path: Location[], thickness: number): void {
-        console.log(`        🎨 DRAWING WIRE PATH: ${path.length} points, thickness ${thickness}`);
-        path.forEach((point, i) => {
-            console.log(`           Point ${i}: (${point.x}, ${point.y})`);
-        });
-        
         if (path.length < 2) {
             console.warn(`        ❌ Not enough points to draw path: ${path.length}`);
             return;
         }
         
-        // Clear existing path
         wireGraphics.clear();
         
-        // Draw the routing path
-        wireGraphics.moveTo(path[0].x, path[0].y);
-        for (let i = 1; i < path.length; i++) {
-            wireGraphics.lineTo(path[i].x, path[i].y);
+        const [start, control, end] = path;
+
+        if (path.length === 3 && control) { // It's a curve
+            wireGraphics.moveTo(start.x, start.y);
+            wireGraphics.quadraticCurveTo(control.x, control.y, end.x, end.y);
+        } else { // Fallback to straight line
+            wireGraphics.moveTo(start.x, start.y);
+            wireGraphics.lineTo(end.x, end.y);
         }
         
         wireGraphics.stroke({ 
@@ -723,8 +681,6 @@ export class TileRenderer {
             color: SWITCH_MATRIX_WIRE_CONSTANTS.DEFAULT_COLOR,
             alpha: SWITCH_MATRIX_WIRE_CONSTANTS.DEFAULT_ALPHA 
         });
-        
-        console.log(`        ✅ Wire drawn successfully with color 0x${SWITCH_MATRIX_WIRE_CONSTANTS.DEFAULT_COLOR.toString(16)}`);
     }
 
 

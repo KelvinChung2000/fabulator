@@ -99,55 +99,45 @@ export class DesignRenderer {
     }
 
     private createDesignConnection(tileContainer: Container, ports: ConnectedPorts, location: DiscreteLocation): void {
-        console.log(`🔗 Creating connection: ${ports.portA} ↔ ${ports.portB} at X${location.x}Y${location.y}`);
-        
-        // Find the switch matrix container within the tile
         const switchMatrixContainer = this.findSwitchMatrixContainer(tileContainer);
         if (!switchMatrixContainer) {
             console.warn(`⚠️  No switch matrix container found in tile at X${location.x}Y${location.y}`);
             return;
         }
 
-        // Find port positions within the switch matrix
-        const portAPos = this.findPortPosition(switchMatrixContainer, ports.portA);
-        const portBPos = this.findPortPosition(switchMatrixContainer, ports.portB);
-
-        if (!portAPos || !portBPos) {
-            console.warn(`⚠️  Could not find positions for ports ${ports.portA} or ${ports.portB}`);
+        const wireGraphics = this.findWireGraphics(switchMatrixContainer, ports.portA, ports.portB);
+        if (!wireGraphics || !(wireGraphics as any).routingPath) {
+            console.warn(`⚠️  Could not find wire graphics for connection ${ports.portA} ↔ ${ports.portB}`);
             return;
         }
 
-        // Create the connection line
+        const routingPath = (wireGraphics as any).routingPath;
         const connectionLine = new Graphics();
-        
-        // Convert local port positions to tile-relative positions
-        const globalPortAPos = {
-            x: switchMatrixContainer.x + portAPos.x,
-            y: switchMatrixContainer.y + portAPos.y
-        };
-        const globalPortBPos = {
-            x: switchMatrixContainer.x + portBPos.x,
-            y: switchMatrixContainer.y + portBPos.y
-        };
 
-        connectionLine.moveTo(globalPortAPos.x, globalPortAPos.y);
-        connectionLine.lineTo(globalPortBPos.x, globalPortBPos.y);
+        // The routing path is relative to the switch matrix, so we need to transform it to be relative to the tile container
+        connectionLine.x = switchMatrixContainer.x;
+        connectionLine.y = switchMatrixContainer.y;
+
+        const [start, control, end] = routingPath;
         
-        // Calculate dynamic wire width based on zoom or use default
-        const wireWidth = this.calculateDesignWireWidth();
-        
+        if (routingPath.length === 3 && control) {
+            connectionLine.moveTo(start.x, start.y);
+            connectionLine.quadraticCurveTo(control.x, control.y, end.x, end.y);
+        } else {
+            connectionLine.moveTo(start.x, start.y);
+            connectionLine.lineTo(end.x, end.y);
+        }
+
         connectionLine.stroke({ 
-            width: wireWidth, 
-            color: WIRE_CONSTANTS.DESIGN_COLOR, // Red color matching JavaFX userDesignColor
+            width: this.calculateDesignWireWidth(),
+            color: WIRE_CONSTANTS.DESIGN_COLOR,
             alpha: WIRE_CONSTANTS.DESIGN_ALPHA 
         });
 
-        // Make interactive
         connectionLine.eventMode = 'static';
         connectionLine.cursor = 'pointer';
         connectionLine.on('click', () => this.onDesignConnectionClick(ports, location));
 
-        // Add connection hash for identification
         const connectionHash = this.generateConnectionHash(ports, location);
         (connectionLine as any).userData = { 
             type: 'designConnection', 
@@ -156,18 +146,31 @@ export class DesignRenderer {
             hash: connectionHash 
         };
 
-        // Add to tile container (not design container to keep it with the tile)
-        tileContainer.addChild(connectionLine);
-        
-        console.log(`✅ Created design connection from (${globalPortAPos.x}, ${globalPortAPos.y}) to (${globalPortBPos.x}, ${globalPortBPos.y})`);
+        // Add to the main design container, which is a direct child of the viewport
+        // This ensures design connections are rendered on top of all fabric elements
+        this.designContainer.addChild(connectionLine);
     }
 
     // =============================================================================
     // PORT AND CONTAINER FINDING
     // =============================================================================
 
+    private findWireGraphics(switchMatrixContainer: Container, portA: string, portB: string): Graphics | null {
+        for (const child of switchMatrixContainer.children) {
+            const userData = (child as any).userData;
+            if (userData && userData.type === 'switchMatrixWire') {
+                const sourcePort = userData.sourcePort;
+                const destPort = userData.destPort;
+                if ((sourcePort === portA && destPort === portB) || (sourcePort === portB && destPort === portA)) {
+                    return child as Graphics;
+                }
+            }
+        }
+        return null;
+    }
+
     private getTileContainer(location: DiscreteLocation): Container | null {
-        if (!this.tileContainers.length) return null;
+        if (!this.tileContainers.length) {return null;}
         
         // Check bounds
         if (location.y < 0 || location.y >= this.tileContainers.length ||
@@ -223,7 +226,7 @@ export class DesignRenderer {
     // =============================================================================
 
     public highlightNet(netName: string): void {
-        if (!this.currentDesign) return;
+        if (!this.currentDesign) {return;}
         
         const net = this.currentDesign.config.netMap.get(netName);
         if (!net) {
@@ -259,7 +262,7 @@ export class DesignRenderer {
     // =============================================================================
 
     public getDesignStatistics(): any {
-        if (!this.currentDesign) return null;
+        if (!this.currentDesign) {return null;}
         
         const stats = DesignUtils.generateStatistics(this.currentDesign.config);
         return {
